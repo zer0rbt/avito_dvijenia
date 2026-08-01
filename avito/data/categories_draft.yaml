@@ -1,0 +1,76 @@
+# ЧЕРНОВИК. verified: false — НЕ бралось из API или ЛК аккаунта, а собрано
+# по кросс-сверке нескольких независимых открытых источников (гайды по
+# автозагрузке XML для категории "Одежда, обувь, аксессуары": elama.ru,
+# mango-office, massposting, bidline, infostart и others), т.к.:
+#   - официальная страница https://autoload.avito.ru/format/ рендерится
+#     клиентским JS (module federation), статикой не читается;
+#   - подтверждённого REST-эндпоинта для дерева категорий/полей не нашлось
+#     (см. avito/client.py — только READ-эндпоинты autoload CONFIRMED).
+#
+# avito/categories.py громко предупреждает, пока verified: false.
+# Перед первой публикацией это нужно сверить руками через ЛК Авито:
+# Автозагрузка → Правила и шаблоны → выбрать категорию/подкатегорию —
+# там показывается официальный список обязательных полей и допустимых
+# значений. Обновить этот файл и выставить verified: true.
+
+verified: false
+verified_at: null
+verified_by: null
+source_note: "черновик по открытым источникам, не сверено с ЛК аккаунта"
+
+category_path: "Личные вещи → Одежда, обувь, аксессуары"
+
+common_fields:
+  # Общие для любого объявления в этой категории
+  Id: {required: true, note: "наш internal_id, уникален в рамках фида"}
+  Title: {required: true}
+  Description: {required: true}
+  Price: {required: true}
+  Category: {required: true, value: "Личные вещи"}
+  GoodsType: {required: true, note: "подкатегория, см. goods_types ниже"}
+  Address: {required: true, note: "адрес из GEO_ADDRESSES, core/models.py"}
+  Images: {required: true, note: "минимум 1 фото, тег зависит от версии формата (Image/ImageUrls)"}
+  AdStatus: {required: false, note: "используется при затирке для перевода в архив"}
+  DateBegin: {required: false}
+  DateEnd: {required: false, note: "план: возможный триггер архивации в затирке, требует пилотной проверки"}
+
+goods_types:
+  - key: mens_outerwear
+    label_ru: "Мужская одежда"
+    avito_goods_type: "UNVERIFIED"  # точная строка значения тега — сверить в ЛК
+    extra_fields:
+      Size: {required: true, note: "сетка мужской одежды: XS,S,M,L,XL,XXL,...; сверить допустимые значения"}
+      Color: {required: false}
+      Brand: {required: false}
+      Condition: {required: true, value: "Новое"}
+  - key: womens_outerwear
+    label_ru: "Женская одежда"
+    avito_goods_type: "UNVERIFIED"
+    extra_fields:
+      Size: {required: true, note: "сетка женской одежды — сверить"}
+      Color: {required: false}
+      Brand: {required: false}
+      Condition: {required: true, value: "Новое"}
+  - key: mens_shoes
+    label_ru: "Мужская обувь"
+    avito_goods_type: "UNVERIFIED"
+    extra_fields:
+      Size: {required: true, note: "размер обуви в штихмассовой системе (сверить формат: 40, 41...)"}
+      Color: {required: false}
+      Brand: {required: false}
+      Condition: {required: true, value: "Новое"}
+  - key: womens_shoes
+    label_ru: "Женская обувь"
+    avito_goods_type: "UNVERIFIED"
+    extra_fields:
+      Size: {required: true, note: "сверить формат размеров"}
+      Color: {required: false}
+      Brand: {required: false}
+      Condition: {required: true, value: "Новое"}
+
+open_questions:
+  - "Точные строковые значения GoodsType для каждой из 4 подкатегорий"
+  - "Тег фото в текущей версии формата: Images/Image/ImageUrls — какой актуален"
+  - "Обязателен ли Brand как отдельный тег, или бренд достаточно указать в Title/Description"
+  - "Формат размеров обуви: числовой (40) или с половинками (40.5)"
+  - "Ведёт ли выставление DateEnd=сегодня к немедленному архивированию, или только к остановке продления"
