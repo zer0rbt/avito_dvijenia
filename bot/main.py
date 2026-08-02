@@ -13,6 +13,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 
+import lifecycle.publish  # noqa: F401 — регистрирует исполнитель OperationKind.PUBLISH
 from bot.handlers import router
 from core.config import get_settings
 from core.db import init_db

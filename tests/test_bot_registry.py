@@ -7,7 +7,9 @@ from core.models import OperationKind
 
 
 def test_unregistered_kind_raises_not_implemented():
-    executor = build_executor(OperationKind.PUBLISH, [1, 2])
+    # ARCHIVE — до Э7 намеренно без исполнителя. PUBLISH теперь регистрирует
+    # lifecycle/publish.py (Э5), больше не годится как пример "пусто".
+    executor = build_executor(OperationKind.ARCHIVE, [1, 2])
     with pytest.raises(NotImplementedError):
         executor()
 

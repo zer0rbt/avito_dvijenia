@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
 
+import lifecycle.publish  # noqa: F401 — регистрирует исполнитель OperationKind.PUBLISH
 from admin.queue import (
     apply_operator_decisions,
     fetch_new_log_entries,
@@ -20,18 +21,23 @@ from admin.queue import (
 )
 from admin.sheet import AdminSheet, AdminSheetNotConfiguredError
 from avito.auth import AvitoAuthError, fetch_access_token
+from avito.budget import BudgetCheckError, check_budget
 from avito.categories import DATA_PATH, load_categories, render_markdown
 from avito.client import AvitoApiError, AvitoClient
+from avito.feed import build_feed_xml, validate_feed_xml
 from avito.sizes import map_sizes
+from bot.registry import build_executor
 from content.build import build_listings_for_product
 from content.dedup import is_too_similar
 from content.descriptions import render_description
 from content.humanize import HumanizeViolationError
 from content.respin import respin
 from content.titles import render_title
+from core.approval import ApprovalRequiredError, request_operation
 from core.config import get_settings
 from core.db import get_session, init_db
-from core.models import GeoCity, Product, ProductStatus
+from core.models import GeoCity, Listing, ListingState, OperationKind, Product, ProductStatus
+from lifecycle.planner import plan_next_batch
 from media.pipeline import sync_media_for_supplier_items
 from media.store import get_media_store
 from sources.gsheets import ALL_SOURCES
@@ -415,6 +421,140 @@ def admin_sync() -> None:
         mark_log_entries_pushed(session, new_log_entries)
 
     console.print(f"\nТаблица-пульт обновлена: {len(all_products)} товаров в очереди.")
+
+
+feed_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(feed_app, name="feed")
+
+
+@feed_app.command("build")
+def feed_build() -> None:
+    """Э5: собрать XML фида из QUEUED/PUBLISHED Listing и прогнать через
+    локальную валидацию. Ни одного запроса к боевому API — сознательно НЕ
+    требует avito/categories.py verified: true (это нужно только для
+    реальной отдачи фида, см. web/app.py), чтобы можно было проверять
+    структуру XML на черновике категорий (план, Верификация, п.7).
+    """
+    init_db()
+    with get_session() as session:
+        listings = list(
+            session.exec(
+                select(Listing).where(
+                    Listing.state.in_([ListingState.QUEUED, ListingState.PUBLISHED])
+                )
+            )
+        )
+        products_by_id = {p.id: p for p in session.exec(select(Product))}
+
+    result = build_feed_xml(listings, products_by_id)
+    console.print(result.xml)
+
+    console.print(
+        f"\nвключено в фид: {len(result.included_listing_ids)} | исключено: {len(result.excluded)}"
+    )
+    for listing_id, reason in result.excluded[:10]:
+        console.print(f"  [yellow]#{listing_id}: {reason}[/yellow]")
+
+    errors = validate_feed_xml(result.xml)
+    if errors:
+        console.print("\n[red]Ошибки локальной валидации:[/red]")
+        for e in errors:
+            console.print(f"  [red]{e}[/red]")
+    else:
+        console.print("\n[green]Локальная валидация пройдена.[/green]")
+
+
+budget_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(budget_app, name="budget")
+
+
+@budget_app.command("check")
+def budget_check() -> None:
+    """Э5: живой read-only запрос баланса (тот же CONFIRMED-эндпоинт, что
+    и check-access/бот /balance) — проверить, разрешена ли публикация
+    новых карточек порогом min_balance_rub. Затирку/архивацию не блокирует.
+    """
+    settings = get_settings()
+    if not settings.avito_user_id:
+        console.print("[red]AVITO_USER_ID не задан в .env[/red]")
+        raise typer.Exit(1)
+
+    try:
+        status = check_budget(user_id=settings.avito_user_id)
+    except BudgetCheckError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    if status.publish_allowed:
+        console.print(
+            f"[green]Публикация разрешена.[/green] Баланс: {status.balance_rub:.0f} ₽ "
+            f"(порог: {status.min_balance_rub} ₽)"
+        )
+    else:
+        console.print(f"[red]Публикация заблокирована: {status.reason}[/red]")
+
+
+planner_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(planner_app, name="planner")
+
+
+@planner_app.command("run")
+def planner_run(
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--write", help="По умолчанию только показывает, что выбрал бы планировщик."
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="При --write: исполнить сразу, без подтверждения через бота (только ручная отладка CLI).",
+    ),
+) -> None:
+    """Э5: выбрать DRAFT-Listing одобренных товаров под max_active_listings,
+    отранжировав по score, и запросить операцию PUBLISH через режим
+    оператора. `--write` без `--yes` создаёт PendingOperation и ждёт
+    подтверждения в боте (`/pending`); `--write --yes` исполняет сразу —
+    только для отладки, планировщик так никогда не вызывается.
+    """
+    init_db()
+    settings = get_settings()
+
+    with get_session() as session:
+        already_active = session.exec(
+            select(Listing).where(Listing.state.in_([ListingState.QUEUED, ListingState.PUBLISHED]))
+        ).all()
+        plan = plan_next_batch(
+            session,
+            max_active_listings=settings.max_active_listings,
+            already_active_count=len(already_active),
+        )
+
+        if not plan.selected_listing_ids:
+            console.print("Нечего публиковать — нет DRAFT-листингов в рамках бюджета.")
+            if plan.skipped_over_budget:
+                console.print(f"За пределами бюджета: {len(plan.skipped_over_budget)}")
+            return
+
+        summary = (
+            f"опубликовать {len(plan.selected_listing_ids)} карточек "
+            f"(за пределами бюджета: {len(plan.skipped_over_budget)})"
+        )
+        try:
+            outcome = request_operation(
+                session,
+                kind=OperationKind.PUBLISH,
+                listing_ids=plan.selected_listing_ids,
+                summary=summary,
+                executor=build_executor(OperationKind.PUBLISH, plan.selected_listing_ids),
+                dry_run=dry_run,
+                auto_confirm=yes,
+                actor="cli:planner",
+            )
+        except ApprovalRequiredError as e:
+            console.print(f"[yellow]{e}[/yellow]")
+            console.print("Подтвердить через /pending в боте либо `planner run --write --yes`.")
+            return
+
+    console.print(f"[green]{outcome}[/green]")
 
 
 if __name__ == "__main__":

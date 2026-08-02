@@ -1,4 +1,4 @@
-.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build bot
+.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build feed-build budget-check planner-run bot web
 
 help:
 	@echo "setup        - создать venv и поставить зависимости"
@@ -15,7 +15,11 @@ help:
 	@echo "media-sync   - скачать фото поставщика в MediaStore, показать диф (dry-run)"
 	@echo "media-sync-write - то же, но реально скачать и записать MediaAsset"
 	@echo "content-build - собрать Listing (5 гео-копий) для APPROVED-товаров"
+	@echo "feed-build   - собрать и провалидировать XML фида (без обращения к Авито)"
+	@echo "budget-check - живой read-only запрос баланса, проверка порога min_balance_rub"
+	@echo "planner-run  - выбрать DRAFT-листинги под бюджет, запросить PUBLISH (dry-run)"
 	@echo "bot          - запустить Telegram-бота"
+	@echo "web          - запустить FastAPI (/feed.xml, /media/*, /health)"
 
 setup:
 	bash scripts/setup_venv.sh
@@ -59,5 +63,17 @@ media-sync-write:
 content-build:
 	bash scripts/run_cli.sh content build
 
+feed-build:
+	bash scripts/run_cli.sh feed build
+
+budget-check:
+	bash scripts/run_cli.sh budget check
+
+planner-run:
+	bash scripts/run_cli.sh planner run
+
 bot:
 	bash scripts/run_bot.sh
+
+web:
+	bash scripts/run_web.sh
