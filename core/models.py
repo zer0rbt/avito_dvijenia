@@ -74,10 +74,17 @@ class Product(SQLModel, table=True):
     supplier_item_id: int | None = Field(default=None, foreign_key="supplieritem.id")
 
     title: str  # "Бренд Модель", напр. "Balenciaga Arena"
-    brand: str
-    goods_type: str  # обувь | верхняя одежда
+    # brand и goods_type — Optional намеренно: у реальных данных (Э1) 47 из 82
+    # товаров без опознанного бренда, а goods_type не проставляет вообще ни
+    # один источник (см. docs/BACKLOG.md B-010, B-011). Отсутствие значения —
+    # ровно то, что должна поймать очередь модерации, а не NOT NULL на уровне
+    # схемы, который просто уронит вставку.
+    brand: str | None = None
+    goods_type: str | None = None  # обувь | верхняя одежда
     avito_category: str | None = None  # значение из avito/categories.py
-    color: str
+    # Optional по той же причине: best_dropship_hoodies вообще не хранит цвет
+    # отдельным полем (51 из 82 товаров) — не гадать, оставлять пустым.
+    color: str | None = None
     sizes_supplier: str = ""  # CSV сырых размеров
     sizes_avito: str = ""  # CSV размеров после sizes.py-маппинга
 
@@ -225,3 +232,13 @@ class AuditLogEntry(SQLModel, table=True):
     actor: str  # "system" | tg user id
     action: str
     details: str = ""
+
+
+class SyncState(SQLModel, table=True):
+    """Небольшой key-value для водяных знаков синка (напр. до какого
+    AuditLogEntry.id уже дописано в таблицу-пульт) — не обязательно
+    заводить отдельную таблицу под каждый такой счётчик.
+    """
+
+    key: str = Field(primary_key=True)
+    value: str = ""

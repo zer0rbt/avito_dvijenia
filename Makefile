@@ -1,4 +1,4 @@
-.PHONY: help setup check test lint fix audit access sync sync-write categories bot
+.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync bot
 
 help:
 	@echo "setup        - создать venv и поставить зависимости"
@@ -11,6 +11,7 @@ help:
 	@echo "sync         - стянуть прайсы поставщика, показать диф (dry-run)"
 	@echo "sync-write   - то же, но записать в БД"
 	@echo "categories   - перегенерировать docs/categories.md"
+	@echo "admin-sync   - синк таблицы-пульта: решения оператора + очередь модерации"
 	@echo "bot          - запустить Telegram-бота"
 
 setup:
@@ -42,6 +43,9 @@ sync-write:
 
 categories:
 	bash scripts/run_cli.sh categories dump
+
+admin-sync:
+	bash scripts/run_cli.sh admin sync
 
 bot:
 	bash scripts/run_bot.sh

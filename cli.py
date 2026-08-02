@@ -10,12 +10,21 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
+from sqlmodel import select
 
+from admin.queue import (
+    apply_operator_decisions,
+    fetch_new_log_entries,
+    mark_log_entries_pushed,
+    sync_products_from_supplier_items,
+)
+from admin.sheet import AdminSheet, AdminSheetNotConfiguredError
 from avito.auth import AvitoAuthError, fetch_access_token
 from avito.categories import DATA_PATH, load_categories, render_markdown
 from avito.client import AvitoApiError, AvitoClient
 from core.config import get_settings
 from core.db import get_session, init_db
+from core.models import Product
 from sources.gsheets import ALL_SOURCES
 from sources.reconcile import reconcile_source
 
@@ -206,6 +215,55 @@ def sources_sync(
         console.print(
             "\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]"
         )
+
+
+admin_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(admin_app, name="admin")
+
+
+@admin_app.command("sync")
+def admin_sync() -> None:
+    """Э2: двусторонний синк с таблицей-пультом.
+
+    Порядок жёстко фиксирован (см. admin/sheet.py): сначала читаем решения
+    оператора ("Решение" в Товарах) и применяем их в БД, только потом
+    досоздаём/обновляем Product из SupplierItem авто-правилами и
+    перезаписываем вкладку — иначе свежий push затрёт то, что оператор
+    только что вписал в этом же прогоне.
+    """
+    init_db()
+
+    try:
+        sheet = AdminSheet()
+    except AdminSheetNotConfiguredError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    with get_session() as session:
+        decisions = sheet.pull_decisions()
+        applied = apply_operator_decisions(session, decisions)
+        if applied:
+            console.print(f"Применено решений оператора: {len(applied)}")
+            for product_id, status in list(applied.items())[:10]:
+                console.print(f"  #{product_id} -> {status}")
+
+        summary = sync_products_from_supplier_items(session)
+        console.print(
+            f"создано: {len(summary.created)} | обновлено: {len(summary.updated)} | "
+            f"авто-APPROVED: {len(summary.auto_approved)} | "
+            f"NEEDS_REVIEW: {len(summary.needs_review)} | "
+            f"пропало у поставщика: {len(summary.disappeared_rejected)}"
+        )
+
+        all_products = list(session.exec(select(Product)))
+        sheet.push_products(all_products)
+        sheet.ensure_placeholder_tabs()
+
+        new_log_entries = fetch_new_log_entries(session)
+        sheet.push_log(new_log_entries)
+        mark_log_entries_pushed(session, new_log_entries)
+
+    console.print(f"\nТаблица-пульт обновлена: {len(all_products)} товаров в очереди.")
 
 
 if __name__ == "__main__":
