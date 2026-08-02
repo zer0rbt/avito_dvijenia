@@ -6,6 +6,7 @@ venv/
 *.db
 *.sqlite3
 media_store/
+secrets/
 .pytest_cache/
 *.egg-info/
 dist/

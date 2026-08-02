@@ -15,7 +15,9 @@ from avito.auth import AvitoAuthError, fetch_access_token
 from avito.categories import DATA_PATH, load_categories, render_markdown
 from avito.client import AvitoClient, AvitoApiError
 from core.config import get_settings
-from core.db import init_db
+from core.db import get_session, init_db
+from sources.gsheets import ALL_SOURCES
+from sources.reconcile import reconcile_source
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -139,6 +141,57 @@ def categories_dump(
             f"Сгенерировано в {out_path}. Сверить с ЛК → Автозагрузка → "
             "Правила и шаблоны перед боевой публикацией."
         )
+
+
+sources_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(sources_app, name="sources")
+
+
+@sources_app.command("sync")
+def sources_sync(
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--write", help="По умолчанию только печатает диф, БД не трогает."
+    )
+) -> None:
+    """Э1: стянуть обе известные таблицы поставщика, сравнить с тем, что
+    уже в БД, напечатать диф (новые/изменились/пропали). С --write —
+    применить диф к SupplierItem.
+    """
+    init_db()
+
+    with get_session() as session:
+        for source in ALL_SOURCES:
+            console.print(f"\n[bold]{source.name}[/bold]")
+            try:
+                rows = source.fetch()
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[red]Не удалось получить данные: {e}[/red]")
+                continue
+
+            summary = reconcile_source(
+                session,
+                source_name=source.name,
+                fresh_rows=rows,
+                min_expected_rows=getattr(source, "MIN_EXPECTED_ROWS", 1),
+                dry_run=dry_run,
+            )
+
+            if summary.warning:
+                console.print(f"[yellow]⚠️ {summary.warning}[/yellow]")
+
+            console.print(
+                f"новых: {len(summary.new)} | изменилось: {len(summary.changed)} | "
+                f"без изменений: {summary.unchanged_count} | пропало: {len(summary.disappeared)}"
+            )
+            for key in summary.new[:5]:
+                console.print(f"  [green]+[/green] {key}")
+            if len(summary.new) > 5:
+                console.print(f"  ... и ещё {len(summary.new) - 5}")
+            for key in summary.disappeared[:5]:
+                console.print(f"  [red]-[/red] {key}")
+
+    if dry_run:
+        console.print("\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]")
 
 
 if __name__ == "__main__":
