@@ -184,6 +184,13 @@ def apply_operator_decisions(session: Session, decisions: dict[int, str]) -> dic
     Каждое применённое решение пишется в AuditLogEntry — иначе вкладка
     "Лог" таблицы-пульта (см. admin/sheet.py push_log) никогда бы не
     наполнялась содержимым из очереди модерации.
+
+    Повторное решение, ничего не меняющее (товар уже в этом статусе),
+    применённым не считается: не пишет ни updated_at, ни строку в лог.
+    Иначе каждый прогон над не вычищенной колонкой "Решение" заново
+    перекладывает в лог всю её историю — на Э5 так набралось 44 записи
+    аудита на 10 реальных решений, и лог стал выглядеть как чья-то
+    посторонняя активность в БД (B-020).
     """
     applied: dict[int, str] = {}
     for product_id, raw_decision in decisions.items():
@@ -196,10 +203,12 @@ def apply_operator_decisions(session: Session, decisions: dict[int, str]) -> dic
         if product is None:
             continue
 
+        new_reason = None if new_status == ProductStatus.APPROVED else "operator_decision"
+        if product.status == new_status and product.review_reason == new_reason:
+            continue  # то же самое решение уже применено — менять нечего
+
         product.status = new_status
-        product.review_reason = (
-            None if new_status == ProductStatus.APPROVED else "operator_decision"
-        )
+        product.review_reason = new_reason
         product.updated_at = utcnow()
         session.add(product)
         applied[product_id] = new_status.value

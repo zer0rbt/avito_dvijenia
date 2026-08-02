@@ -49,6 +49,14 @@ include = [
     "admin*", "lifecycle*", "messenger*", "scheduler*", "bot*", "web*",
 ]
 
+[tool.pytest.ini_options]
+# Тесты живут только в tests/. Без этого pytest забирал по маске test_*.py
+# всё дерево — в том числе разовые скрипты из scripts/, у которых работа
+# делается прямо в теле модуля, а импорт при сборе тестов = её выполнение
+# на боевых данных (B-020).
+testpaths = ["tests"]
+norecursedirs = ["scripts", "data", "media_store", "secrets", ".venv"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

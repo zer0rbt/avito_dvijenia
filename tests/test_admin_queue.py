@@ -206,3 +206,23 @@ def test_apply_operator_decisions_writes_audit_log(session):
     assert entries[0].actor == "operator:sheet"
     assert "REJECTED" in entries[0].action
     assert str(product.id) in entries[0].details
+
+
+def test_apply_operator_decisions_is_idempotent(session):
+    # B-020: колонка "Решение" в таблице чистится только push_products();
+    # если прогон до него не дошёл, следующий читает те же ячейки. Повтор
+    # не должен ни трогать товар, ни плодить записи аудита.
+    session.add(_supplier_item(source_key="s:1"))
+    session.commit()
+    sync_products_from_supplier_items(session)
+    product = session.exec(select(Product)).one()
+
+    first = apply_operator_decisions(session, {product.id: "пропустить"})
+    assert first == {product.id: "REJECTED"}
+    updated_at_after_first = session.get(Product, product.id).updated_at
+
+    second = apply_operator_decisions(session, {product.id: "пропустить"})
+
+    assert second == {}, "повторное то же решение не должно считаться применённым"
+    assert len(session.exec(select(AuditLogEntry)).all()) == 1
+    assert session.get(Product, product.id).updated_at == updated_at_after_first

@@ -1,4 +1,27 @@
+"""Изоляция тестов от боевой БД.
+
+Изоляция здесь **autouse** и намеренно не оставлена на усмотрение теста
+(B-020). Раньше её давала только фикстура `session`; тест, который её не
+просил, молча работал с файловой БД из .env. Так два реальных Listing и
+ушли в QUEUED: `tests/test_bot_registry.py` собирал исполнителя PUBLISH и
+вызывал его, а `lifecycle/publish.py` открывает сессию сам, через
+`core.db.get_session()` — то есть фикстура тесту "не нужна", а до БД он
+дотягивается. Теперь боевой БД в процессе pytest просто нет.
+
+Два рубежа, потому что они закрывают разные дыры:
+  1. DATABASE_URL до импорта core.db — на случай `from core.db import engine`
+     (engine связывается по значению в момент импорта, monkeypatch его уже
+     не догонит);
+  2. monkeypatch самого core.db.engine — на случай, если engine кто-то
+     пересоздаст в рантайме.
+"""
+
 from __future__ import annotations
+
+import os
+
+# Строго до импорта core.db: он создаёт engine на уровне модуля.
+os.environ["DATABASE_URL"] = "sqlite://"
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -6,10 +29,13 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import core.db as db_module
 
+IN_MEMORY_URL = "sqlite://"
 
-@pytest.fixture()
-def session(monkeypatch):
-    """Изолированная in-memory БД на тест, вместо файла из .env.
+
+@pytest.fixture(autouse=True)
+def isolated_engine(monkeypatch):
+    """Своя пустая in-memory БД на каждый тест — включая те, что про БД
+    вообще не думают.
 
     StaticPool обязателен: без него у каждого нового подключения к
     "sqlite://" — своя пустая база (SQLite in-memory изолирован по
@@ -18,11 +44,16 @@ def session(monkeypatch):
     общего пула тот поток видел бы БД без единой таблицы.
     """
     engine = create_engine(
-        "sqlite://",
+        IN_MEMORY_URL,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(db_module, "engine", engine)
-    with Session(engine) as s:
+    return engine
+
+
+@pytest.fixture()
+def session(isolated_engine):
+    with Session(isolated_engine) as s:
         yield s
