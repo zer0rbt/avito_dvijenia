@@ -127,6 +127,40 @@ GEO_ADDRESSES: dict[GeoCity, dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Медиа (Э3)
+# ---------------------------------------------------------------------------
+
+
+class MediaAssetKind(enum.StrEnum):
+    RAW = "RAW"  # как скачано из поста TG / прямой ссылки, без обработки
+    VARIATE = "VARIATE"  # мягкая уникализация под публикацию/перезалив
+    DESTROY = "DESTROY"  # затирочное фото под WIPE_APPLIED
+
+
+class MediaAsset(SQLModel, table=True):
+    """Одно сохранённое изображение под конкретный SupplierItem.
+
+    storage_key — ключ в MediaStore (media/store.py), не сам файл: файл
+    лежит на диске/в S3, здесь только реестр и pHash для поиска дублей
+    (media/phash.py). RAW на source_url уникален по content_key — повторный
+    прогон синка не скачивает и не сохраняет уже известное фото дважды.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    supplier_item_id: int = Field(foreign_key="supplieritem.id", index=True)
+    kind: MediaAssetKind = Field(default=MediaAssetKind.RAW, index=True)
+
+    source_url: str | None = None  # для RAW — откуда скачано; для VARIATE/DESTROY — пусто
+    derived_from_id: int | None = Field(default=None, foreign_key="mediaasset.id")
+
+    storage_key: str = Field(index=True)
+    public_url: str = ""
+    phash: str = ""
+
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Карточки на Авито (Э4-Э7)
 # ---------------------------------------------------------------------------
 

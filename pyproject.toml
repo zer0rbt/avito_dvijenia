@@ -20,6 +20,7 @@ dependencies = [
     "selectolax>=0.3",
     "pillow>=10.3",
     "imagehash>=4.3",
+    "numpy>=1.26",
     "lxml>=5.2",
     "pyyaml>=6.0",
 ]

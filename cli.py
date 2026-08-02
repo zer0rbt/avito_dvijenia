@@ -25,6 +25,8 @@ from avito.client import AvitoApiError, AvitoClient
 from core.config import get_settings
 from core.db import get_session, init_db
 from core.models import Product
+from media.pipeline import sync_media_for_supplier_items
+from media.store import get_media_store
 from sources.gsheets import ALL_SOURCES
 from sources.reconcile import reconcile_source
 
@@ -214,6 +216,44 @@ def sources_sync(
     if dry_run:
         console.print(
             "\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]"
+        )
+
+
+media_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(media_app, name="media")
+
+
+@media_app.command("sync")
+def media_sync(
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--write", help="По умолчанию только считает, что скачал бы, не пишет."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Перекачать фото даже для позиций, у которых уже есть RAW-ассеты."
+    ),
+) -> None:
+    """Э3: скачать исходные фото под каждый SupplierItem (прямые ссылки из
+    таблицы или пост TG-канала) в MediaStore, зарегистрировать в MediaAsset
+    с pHash. Идемпотентно — позиции с уже скачанными фото пропускаются,
+    если не передан --force.
+    """
+    init_db()
+    store = get_media_store()
+
+    with get_session() as session:
+        summary = sync_media_for_supplier_items(session, store, dry_run=dry_run, force=force)
+
+    console.print(
+        f"скачано: {len(summary.fetched)} | без источника фото: {len(summary.skipped_no_source)} | "
+        f"уже было: {len(summary.skipped_already_fetched)} | ошибок: {len(summary.failed)}"
+    )
+    for item_id, error in list(summary.failed.items())[:5]:
+        console.print(f"  [red]#{item_id}: {error}[/red]")
+
+    if dry_run:
+        console.print(
+            "\n[yellow]dry-run: файлы не скачаны, MediaAsset не записан. "
+            "Повторить с --write.[/yellow]"
         )
 
 
