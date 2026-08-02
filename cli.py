@@ -22,9 +22,16 @@ from admin.sheet import AdminSheet, AdminSheetNotConfiguredError
 from avito.auth import AvitoAuthError, fetch_access_token
 from avito.categories import DATA_PATH, load_categories, render_markdown
 from avito.client import AvitoApiError, AvitoClient
+from avito.sizes import map_sizes
+from content.build import build_listings_for_product
+from content.dedup import is_too_similar
+from content.descriptions import render_description
+from content.humanize import HumanizeViolationError
+from content.respin import respin
+from content.titles import render_title
 from core.config import get_settings
 from core.db import get_session, init_db
-from core.models import Product
+from core.models import GeoCity, Product, ProductStatus
 from media.pipeline import sync_media_for_supplier_items
 from media.store import get_media_store
 from sources.gsheets import ALL_SOURCES
@@ -217,6 +224,110 @@ def sources_sync(
         console.print(
             "\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]"
         )
+
+
+content_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(content_app, name="content")
+
+
+@content_app.command("render")
+def content_render(item: int = typer.Option(..., "--item", help="ID Product")) -> None:
+    """Э4: напечатать заголовок и описание всех 5 гео-копий товара в
+    консоль, без записи в БД и без обращения к MediaStore — быстрая
+    проверка шаблонов/humanize на конкретном товаре.
+    """
+    init_db()
+    with get_session() as session:
+        product = session.get(Product, item)
+        if product is None:
+            console.print(f"[red]Product #{item} не найден[/red]")
+            raise typer.Exit(1)
+
+        mapped_sizes, unmapped = map_sizes(product.sizes_supplier.split(","))
+        if unmapped:
+            console.print(f"[yellow]Неразмеченные размеры: {unmapped}[/yellow]")
+        if not mapped_sizes:
+            console.print("[red]Нет ни одного распознанного размера — рендерить нечего[/red]")
+            raise typer.Exit(1)
+
+        title = render_title(brand=product.brand, raw_title=product.title)
+        for city in GeoCity:
+            try:
+                description = render_description(
+                    city,
+                    title=title,
+                    brand=product.brand,
+                    color=product.color,
+                    sizes=mapped_sizes,
+                )
+            except HumanizeViolationError as e:
+                console.print(f"[red]{city.value}: не прошло humanize — {e}[/red]")
+                continue
+            console.print(f"\n[bold]{city.value}[/bold] — {title}")
+            console.print(description)
+
+
+@content_app.command("respin")
+def content_respin(
+    item: int = typer.Option(..., "--item", help="ID Product"),
+    times: int = typer.Option(5, "--times", help="Сколько перезаливов сгенерировать"),
+    city: str = typer.Option("MSK", "--city", help="Город-шаблон, по умолчанию MSK"),
+) -> None:
+    """Э4: сгенерировать N синонимизированных версий описания одного
+    товара/города, проверить шинглами, что версии не совпадают друг с
+    другом выше порога (план: "перезаливы дают пять заметно разных
+    описаний, шинглы не пересекаются выше порога").
+    """
+    init_db()
+    with get_session() as session:
+        product = session.get(Product, item)
+        if product is None:
+            console.print(f"[red]Product #{item} не найден[/red]")
+            raise typer.Exit(1)
+
+        mapped_sizes, _unmapped = map_sizes(product.sizes_supplier.split(","))
+        if not mapped_sizes:
+            console.print("[red]Нет ни одного распознанного размера[/red]")
+            raise typer.Exit(1)
+
+        title = render_title(brand=product.brand, raw_title=product.title)
+        base = render_description(
+            GeoCity(city), title=title, brand=product.brand, color=product.color, sizes=mapped_sizes
+        )
+
+    versions: list[str] = []
+    for i in range(times):
+        version = respin(base, seed=i)
+        too_similar = is_too_similar(version, versions)
+        flag = "[red]похоже на предыдущую версию[/red]" if too_similar else "[green]ок[/green]"
+        console.print(f"\n[bold]перезалив {i + 1}[/bold] — {flag}")
+        console.print(version)
+        versions.append(version)
+
+
+@content_app.command("build")
+def content_build() -> None:
+    """Э4: собрать 5 гео-копий (Listing) для каждого APPROVED Product —
+    заголовок, описание под город, фото-вариации в MediaStore. Публикации
+    не делает, только готовит черновики (Э5).
+    """
+    init_db()
+    store = get_media_store()
+
+    with get_session() as session:
+        products = list(
+            session.exec(select(Product).where(Product.status == ProductStatus.APPROVED))
+        )
+        total_created = total_skipped_unmapped = 0
+        for product in products:
+            summary = build_listings_for_product(session, product, store)
+            total_created += len(summary.created)
+            total_skipped_unmapped += len(summary.skipped_unmapped_sizes)
+
+    console.print(
+        f"товаров APPROVED: {len(products)} | создано Listing: {total_created} | "
+        f"без распознанных размеров: {total_skipped_unmapped}"
+    )
 
 
 media_app = typer.Typer(no_args_is_help=True, add_completion=False)

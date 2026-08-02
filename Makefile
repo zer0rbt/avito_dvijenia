@@ -1,4 +1,4 @@
-.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write bot
+.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build bot
 
 help:
 	@echo "setup        - создать venv и поставить зависимости"
@@ -14,6 +14,7 @@ help:
 	@echo "admin-sync   - синк таблицы-пульта: решения оператора + очередь модерации"
 	@echo "media-sync   - скачать фото поставщика в MediaStore, показать диф (dry-run)"
 	@echo "media-sync-write - то же, но реально скачать и записать MediaAsset"
+	@echo "content-build - собрать Listing (5 гео-копий) для APPROVED-товаров"
 	@echo "bot          - запустить Telegram-бота"
 
 setup:
@@ -54,6 +55,9 @@ media-sync:
 
 media-sync-write:
 	bash scripts/run_cli.sh media sync --write
+
+content-build:
+	bash scripts/run_cli.sh content build
 
 bot:
 	bash scripts/run_bot.sh
