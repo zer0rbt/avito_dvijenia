@@ -8,6 +8,9 @@ venv/
 media_store/
 secrets/
 .pytest_cache/
+
+# Служебное состояние Claude Code, не имеет отношения к проекту
+.claude/
 *.egg-info/
 dist/
 build/
