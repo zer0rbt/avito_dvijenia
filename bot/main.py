@@ -17,8 +17,12 @@ from bot.handlers import router
 from core.config import get_settings
 from core.db import init_db
 
+logger = logging.getLogger(__name__)
+
 
 async def _run() -> None:
+    logging.basicConfig(level=logging.INFO)
+
     settings = get_settings()
     if not settings.tg_bot_token:
         raise SystemExit(
@@ -26,14 +30,12 @@ async def _run() -> None:
             "вписать токен перед запуском."
         )
     if not settings.tg_operator_chat_id:
-        logging.warning(
+        logger.warning(
             "TG_OPERATOR_CHAT_ID не задан — бот отвечает всем отказом. "
-            "Напишите боту /start, chat_id придёт в логах ниже, впишите его в .env."
+            "Напишите боту /whoami, он ответит chat_id, впишите его в .env."
         )
 
     init_db()
-
-    logging.basicConfig(level=logging.INFO)
 
     bot = Bot(token=settings.tg_bot_token)
     dp = Dispatcher()

@@ -34,7 +34,9 @@ def test_parse_price_rub_does_not_merge_two_four_digit_numbers_without_separator
 
 
 def test_clean_title_collapses_newlines_and_strips_quotes():
-    assert clean_title('"ЗИП ХУДИ\nMARTINE ROSE \nx \nSUPREME"') == "ЗИП ХУДИ MARTINE ROSE x SUPREME"
+    assert (
+        clean_title('"ЗИП ХУДИ\nMARTINE ROSE \nx \nSUPREME"') == "ЗИП ХУДИ MARTINE ROSE x SUPREME"
+    )
     assert clean_title("  Stone_Island  ") == "Stone_Island"
     assert clean_title(None) == ""
     assert clean_title("") == ""

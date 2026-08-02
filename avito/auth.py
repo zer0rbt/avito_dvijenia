@@ -52,9 +52,7 @@ def fetch_access_token(client: httpx.Client | None = None) -> str:
 
     settings = get_settings()
     if not settings.is_configured_for_avito:
-        raise AvitoAuthError(
-            "AVITO_CLIENT_ID / AVITO_CLIENT_SECRET не заданы в .env"
-        )
+        raise AvitoAuthError("AVITO_CLIENT_ID / AVITO_CLIENT_SECRET не заданы в .env")
 
     params = {
         "grant_type": "client_credentials",

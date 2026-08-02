@@ -16,7 +16,7 @@ core.approval.confirm_and_execute().
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from core.models import OperationKind
 
@@ -32,6 +32,7 @@ def register(kind: OperationKind, factory: ExecutorFactory) -> None:
 def build_executor(kind: OperationKind, listing_ids: list[int]) -> Callable[[], None]:
     factory = _registry.get(kind)
     if factory is None:
+
         def _not_implemented() -> None:
             raise NotImplementedError(
                 f"Для операции {kind.value} ещё не зарегистрирован исполнитель "

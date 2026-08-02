@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import time
+from typing import ClassVar
 
 import httpx
 
@@ -50,7 +51,7 @@ def fetch_csv_rows(sheet_id: str, timeout: float = 20.0, retries: int = 3) -> li
 
 
 class SolikaDropSource:
-    """"Наличие и прайс Дроп СОЛИКА".
+    """ "Наличие и прайс Дроп СОЛИКА".
 
     Раскладка: строка 0 — заголовок таблицы, строки 1-2 пустые, строка 3 —
     шапка колонок, строка 4 — подписи размеров (XS,S,M,L,XL,XXL) под
@@ -70,7 +71,7 @@ class SolikaDropSource:
 
     name = "gsheets:solika_drop"
     SHEET_ID = "1OLviwwUxBYsK19_lqsMrfkzxCCDH39FActXHfn27_Ck"
-    SIZE_LABELS = ["XS", "S", "M", "L", "XL", "XXL"]
+    SIZE_LABELS: ClassVar[list[str]] = ["XS", "S", "M", "L", "XL", "XXL"]
     HEADER_ROW = 3
     SIZE_SUBHEADER_ROW = 4
     DATA_START_ROW = 5
@@ -85,9 +86,13 @@ class SolikaDropSource:
             if not title:
                 continue  # пустая строка-заполнитель, не товар
 
+            # strict=True намеренно: строка выше добита до 12 колонок, поэтому
+            # row[2:8] обязан дать ровно 6 значений под 6 меток размеров.
+            # Рассинхрон = раскладка таблицы поменялась, и об этом надо узнать
+            # громко, а не разобрать половину размеров молча.
             sizes = [
                 label
-                for label, cell in zip(self.SIZE_LABELS, row[2:8])
+                for label, cell in zip(self.SIZE_LABELS, row[2:8], strict=True)
                 if cell.strip() == "✅"
             ]
             color = clean_title(row[8]) or None
@@ -132,7 +137,7 @@ class BestDropshipHoodiesSource:
 
     name = "gsheets:best_dropship_hoodies"
     SHEET_ID = "1xpkVr3iIZ_PeXRswfLpsHtKtfiKF5mZUQzfXyvVWw3A"
-    SIZE_LABELS = ["S", "M", "L", "XL", "XXL", "XXXL"]
+    SIZE_LABELS: ClassVar[list[str]] = ["S", "M", "L", "XL", "XXL", "XXXL"]
     DATA_START_ROW = 4
     MIN_EXPECTED_ROWS = 10
 
@@ -145,8 +150,9 @@ class BestDropshipHoodiesSource:
             if not title:
                 continue
 
+            # strict=True — см. комментарий в SolikaDropSource.fetch()
             sizes = []
-            for label, cell in zip(self.SIZE_LABELS, row[2:8]):
+            for label, cell in zip(self.SIZE_LABELS, row[2:8], strict=True):
                 cell = cell.strip()
                 if cell and cell != "💎":
                     sizes.append(label)

@@ -24,7 +24,11 @@ def _is_operator(message_or_callback) -> bool:
         # оператор ещё не настроен в .env — по умолчанию отказываем всем,
         # чтобы бот не оказался открыт для первого встречного
         return False
-    chat = message_or_callback.chat if isinstance(message_or_callback, Message) else message_or_callback.message.chat
+    chat = (
+        message_or_callback.chat
+        if isinstance(message_or_callback, Message)
+        else message_or_callback.message.chat
+    )
     return str(chat.id) == str(settings.tg_operator_chat_id)
 
 
@@ -122,13 +126,13 @@ async def on_confirm(callback: CallbackQuery) -> None:
         listing_ids = [int(x) for x in op.listing_ids.split(",") if x]
         executor = build_executor(op.kind, listing_ids)
         try:
-            confirm_and_execute(
-                session, op_id, executor, decided_by=str(callback.from_user.id)
+            confirm_and_execute(session, op_id, executor, decided_by=str(callback.from_user.id))
+            await callback.message.edit_text(
+                callback.message.text + "\n\n✅ ПОДТВЕРЖДЕНО И ИСПОЛНЕНО"
             )
-            await callback.message.edit_text(callback.message.text + "\n\n✅ ПОДТВЕРЖДЕНО И ИСПОЛНЕНО")
         except NotImplementedError as e:
             await callback.message.edit_text(callback.message.text + f"\n\n⚠️ {e}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await callback.message.edit_text(callback.message.text + f"\n\n❌ ОШИБКА: {e}")
     await callback.answer()
 

@@ -15,8 +15,8 @@ dry_run — отдельный, более грубый рубильник: ес
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from sqlmodel import Session, select
 
@@ -36,8 +36,7 @@ class ApprovalRequiredError(RuntimeError):
     def __init__(self, operation: PendingOperation):
         self.operation = operation
         super().__init__(
-            f"Операция #{operation.id} ({operation.kind}) ждёт подтверждения: "
-            f"{operation.summary}"
+            f"Операция #{operation.id} ({operation.kind}) ждёт подтверждения: {operation.summary}"
         )
 
 
@@ -144,9 +143,7 @@ def reject_operation(session: Session, operation_id: int, *, decided_by: str) ->
 def list_pending(session: Session) -> list[PendingOperation]:
     return list(
         session.exec(
-            select(PendingOperation).where(
-                PendingOperation.status == OperationStatus.PENDING
-            )
+            select(PendingOperation).where(PendingOperation.status == OperationStatus.PENDING)
         )
     )
 
@@ -160,7 +157,7 @@ def _execute(
 ) -> PendingOperation:
     try:
         executor()
-    except Exception as e:  # noqa: BLE001 — фиксируем любую ошибку исполнения в операции
+    except Exception as e:
         op.status = OperationStatus.FAILED
         op.error = str(e)[:2000]
         session.add(op)

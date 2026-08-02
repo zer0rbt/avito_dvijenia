@@ -13,7 +13,7 @@ from rich.table import Table
 
 from avito.auth import AvitoAuthError, fetch_access_token
 from avito.categories import DATA_PATH, load_categories, render_markdown
-from avito.client import AvitoClient, AvitoApiError
+from avito.client import AvitoApiError, AvitoClient
 from core.config import get_settings
 from core.db import get_session, init_db
 from sources.gsheets import ALL_SOURCES
@@ -36,9 +36,7 @@ def check_access() -> None:
     settings = get_settings()
 
     if not settings.is_configured_for_avito:
-        console.print(
-            "[red]AVITO_CLIENT_ID / AVITO_CLIENT_SECRET не заданы в .env[/red]"
-        )
+        console.print("[red]AVITO_CLIENT_ID / AVITO_CLIENT_SECRET не заданы в .env[/red]")
         raise typer.Exit(1)
 
     console.print("Запрашиваю OAuth-токен...")
@@ -46,7 +44,7 @@ def check_access() -> None:
         fetch_access_token()
     except AvitoAuthError as e:
         console.print(f"[red]Не удалось получить токен: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     console.print("[green]Токен получен.[/green]")
 
     user_id: str | None = settings.avito_user_id or None
@@ -96,7 +94,11 @@ def _write_api_notes(user_id: str | None, self_info: dict | None, results: list)
     lines = [
         "# Avito API — фактическая проверка доступа",
         "",
-        f"Прогнано: {dt.datetime.now().isoformat(timespec='seconds')}",
+        "<!-- Файл ПЕРЕЗАПИСЫВАЕТСЯ целиком командой `make access`.",
+        "     Не дописывай сюда выводы руками — они будут стёрты при следующем",
+        "     прогоне. Разбор и решения по находкам живут в docs/BACKLOG.md. -->",
+        "",
+        f"Прогнано: {dt.datetime.now(dt.UTC).isoformat(timespec='seconds')}",
         f"user_id: `{user_id}`",
         "",
         "Пути собраны из независимых сторонних источников (не из офиц.",
@@ -111,12 +113,22 @@ def _write_api_notes(user_id: str | None, self_info: dict | None, results: list)
         lines.append(
             f"| {r.name} | {r.confidence} | {r.method} | `{r.path}` | {status} | {r.note} |"
         )
+    lines += [
+        "",
+        "## Что с этим делать",
+        "",
+        "Разбор результатов — в [BACKLOG.md](BACKLOG.md):",
+        "",
+        "- `B-003` — баланс отдаёт 0 ₽ при озвученных ~900 ₽;",
+        "- `B-004` — autoload-эндпоинты дают 404, перепроверить после",
+        "  подключения Автозагрузки в ЛК.",
+    ]
     (DOCS_DIR / "api_notes.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @app.command("categories")
 def categories_dump(
-    action: str = typer.Argument("dump", help="dump — сгенерировать docs/categories.md")
+    action: str = typer.Argument("dump", help="dump — сгенерировать docs/categories.md"),
 ) -> None:
     """Черновик категорий/полей Автозагрузки -> docs/categories.md.
 
@@ -151,7 +163,7 @@ app.add_typer(sources_app, name="sources")
 def sources_sync(
     dry_run: bool = typer.Option(
         True, "--dry-run/--write", help="По умолчанию только печатает диф, БД не трогает."
-    )
+    ),
 ) -> None:
     """Э1: стянуть обе известные таблицы поставщика, сравнить с тем, что
     уже в БД, напечатать диф (новые/изменились/пропали). С --write —
@@ -164,7 +176,7 @@ def sources_sync(
             console.print(f"\n[bold]{source.name}[/bold]")
             try:
                 rows = source.fetch()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 console.print(f"[red]Не удалось получить данные: {e}[/red]")
                 continue
 
@@ -191,7 +203,9 @@ def sources_sync(
                 console.print(f"  [red]-[/red] {key}")
 
     if dry_run:
-        console.print("\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]")
+        console.print(
+            "\n[yellow]dry-run: БД не изменена. Повторить с --write, чтобы сохранить.[/yellow]"
+        )
 
 
 if __name__ == "__main__":

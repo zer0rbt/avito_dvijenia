@@ -8,7 +8,7 @@ SupplierItem -> Product/Variant -> Listing (с гео-копиями) -> StatsDa
 from __future__ import annotations
 
 import enum
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -53,7 +53,7 @@ class SupplierItem(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
-class ProductStatus(str, enum.Enum):
+class ProductStatus(enum.StrEnum):
     NEW = "NEW"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     APPROVED = "APPROVED"
@@ -93,7 +93,7 @@ class Product(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class GeoCity(str, enum.Enum):
+class GeoCity(enum.StrEnum):
     MSK = "MSK"
     SPB = "SPB"
     EKB = "EKB"
@@ -124,7 +124,7 @@ GEO_ADDRESSES: dict[GeoCity, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 
 
-class ListingState(str, enum.Enum):
+class ListingState(enum.StrEnum):
     DRAFT = "DRAFT"
     QUEUED = "QUEUED"
     PUBLISHED = "PUBLISHED"
@@ -184,14 +184,14 @@ class StatsDaily(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
-class OperationKind(str, enum.Enum):
+class OperationKind(enum.StrEnum):
     PUBLISH = "PUBLISH"
     WIPE = "WIPE"
     ARCHIVE = "ARCHIVE"
     REISSUE = "REISSUE"
 
 
-class OperationStatus(str, enum.Enum):
+class OperationStatus(enum.StrEnum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
     REJECTED = "REJECTED"

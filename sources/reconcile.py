@@ -69,11 +69,11 @@ def reconcile_source(
         )
 
     existing_rows = list(
-        session.exec(
-            select(SupplierItem).where(SupplierItem.source_type == "gsheets")
-        )
+        session.exec(select(SupplierItem).where(SupplierItem.source_type == "gsheets"))
     )
-    existing_by_key = {r.source_key: r for r in existing_rows if r.source_key.startswith(source_name)}
+    existing_by_key = {
+        r.source_key: r for r in existing_rows if r.source_key.startswith(source_name)
+    }
     fresh_by_key = {r.source_key: r for r in fresh_rows}
 
     for key, fresh in fresh_by_key.items():

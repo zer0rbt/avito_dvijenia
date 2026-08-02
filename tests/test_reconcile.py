@@ -46,7 +46,9 @@ def test_second_sync_with_same_data_reports_unchanged(session):
 
 
 def test_price_change_is_detected_and_applied(session):
-    reconcile_source(session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False)
+    reconcile_source(
+        session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False
+    )
 
     summary = reconcile_source(
         session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1200.0)], dry_run=False
@@ -65,7 +67,9 @@ def test_disappeared_item_marked_unavailable_not_deleted(session):
         dry_run=False,
     )
 
-    summary = reconcile_source(session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False)
+    summary = reconcile_source(
+        session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False
+    )
     assert summary.disappeared == ["s:2"]
 
     item_b = session.exec(select(SupplierItem).where(SupplierItem.source_key == "s:2")).one()
@@ -73,13 +77,17 @@ def test_disappeared_item_marked_unavailable_not_deleted(session):
 
 
 def test_reappeared_item_flips_back_to_available(session):
-    reconcile_source(session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False)
+    reconcile_source(
+        session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False
+    )
     reconcile_source(session, source_name="s", fresh_rows=[], dry_run=False)
 
     item = session.exec(select(SupplierItem).where(SupplierItem.source_key == "s:1")).one()
     assert item.is_available is False
 
-    reconcile_source(session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False)
+    reconcile_source(
+        session, source_name="s", fresh_rows=[_row("s:1", "Товар A", 1000.0)], dry_run=False
+    )
     session.refresh(item)
     assert item.is_available is True
 

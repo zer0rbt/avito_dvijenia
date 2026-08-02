@@ -4,16 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from core.config import get_settings
-
-# noqa: импортируем модели, чтобы SQLModel.metadata их увидел при create_all
+# Импорт моделей нужен ради side-effect: без него SQLModel.metadata пустая
+# и create_all() не создаст ни одной таблицы.
 from core import models  # noqa: F401
+from core.config import get_settings
 
 
 def _engine():

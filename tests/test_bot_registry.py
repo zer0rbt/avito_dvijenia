@@ -14,7 +14,7 @@ def test_unregistered_kind_raises_not_implemented():
 
 def test_registered_factory_is_used():
     calls = []
-    register(OperationKind.WIPE, lambda ids: (lambda: calls.append(ids)))
+    register(OperationKind.WIPE, lambda ids: lambda: calls.append(ids))
 
     executor = build_executor(OperationKind.WIPE, [3, 4])
     executor()

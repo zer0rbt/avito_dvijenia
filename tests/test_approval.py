@@ -66,9 +66,7 @@ def test_confirm_and_execute_runs_executor_and_marks_executed(session):
         )
     op_id = exc_info.value.operation.id
 
-    result = confirm_and_execute(
-        session, op_id, lambda: executed.append(True), decided_by="tester"
-    )
+    result = confirm_and_execute(session, op_id, lambda: executed.append(True), decided_by="tester")
 
     assert result.status == OperationStatus.EXECUTED
     assert executed == [True]
@@ -94,6 +92,7 @@ def test_confirm_and_execute_marks_failed_on_executor_error(session):
         confirm_and_execute(session, op_id, _boom, decided_by="tester")
 
     from sqlmodel import select
+
     from core.models import PendingOperation
 
     op = session.exec(select(PendingOperation).where(PendingOperation.id == op_id)).one()

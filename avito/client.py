@@ -28,7 +28,7 @@ check-access (cli.py) прогоняет все методы этого файл
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import httpx
 
@@ -66,7 +66,7 @@ class AvitoClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "AvitoClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -96,49 +96,35 @@ class AvitoClient:
 
     def get_operations_history(self, user_id: str, **params: Any) -> dict:
         """POST /core/v1/accounts/operations_history/ — история операций по счёту."""
-        return self.request(
-            "POST", "/core/v1/accounts/operations_history/", json=params
-        ).json()
+        return self.request("POST", "/core/v1/accounts/operations_history/", json=params).json()
 
     # -- items. CONFIRMED (covox/avito_api README + AutoloadApi.md пересекаются)
 
     def get_item(self, user_id: str, item_id: str) -> dict:
         """GET /core/v1/accounts/{user_id}/items/{item_id}/"""
-        return self.request(
-            "GET", f"/core/v1/accounts/{user_id}/items/{item_id}/"
-        ).json()
+        return self.request("GET", f"/core/v1/accounts/{user_id}/items/{item_id}/").json()
 
     def get_item_stats(self, user_id: str, **payload: Any) -> dict:
         """POST /core/v1/accounts/{user_id}/stats/items"""
-        return self.request(
-            "POST", f"/core/v1/accounts/{user_id}/stats/items", json=payload
-        ).json()
+        return self.request("POST", f"/core/v1/accounts/{user_id}/stats/items", json=payload).json()
 
     def get_account_spendings(self, user_id: str, **payload: Any) -> dict:
         """CANDIDATE: POST /stats/v2/accounts/{user_id}/spendings (n8n-nodes-avito-api)."""
-        return self.request(
-            "POST", f"/stats/v2/accounts/{user_id}/spendings", json=payload
-        ).json()
+        return self.request("POST", f"/stats/v2/accounts/{user_id}/spendings", json=payload).json()
 
     # -- autoload. CONFIRMED только READ-эндпоинты (совпали в covox/avito_api и avito_api2)
 
     def get_autoload_item(self, user_id: str, ad_id: str) -> dict:
         """GET /autoload/v1/accounts/{user_id}/items/{ad_id}/ — статус выгрузки объявления."""
-        return self.request(
-            "GET", f"/autoload/v1/accounts/{user_id}/items/{ad_id}/"
-        ).json()
+        return self.request("GET", f"/autoload/v1/accounts/{user_id}/items/{ad_id}/").json()
 
     def get_autoload_last_report(self, user_id: str) -> dict:
         """GET /autoload/v1/accounts/{user_id}/reports/last_report/"""
-        return self.request(
-            "GET", f"/autoload/v1/accounts/{user_id}/reports/last_report/"
-        ).json()
+        return self.request("GET", f"/autoload/v1/accounts/{user_id}/reports/last_report/").json()
 
     def get_autoload_report(self, user_id: str, report_id: str) -> dict:
         """GET /autoload/v1/accounts/{user_id}/reports/{report_id}/"""
-        return self.request(
-            "GET", f"/autoload/v1/accounts/{user_id}/reports/{report_id}/"
-        ).json()
+        return self.request("GET", f"/autoload/v1/accounts/{user_id}/reports/{report_id}/").json()
 
     def get_autoload_reports(self, user_id: str, **params: Any) -> dict:
         """GET /autoload/v1/accounts/{user_id}/reports/"""
@@ -149,9 +135,7 @@ class AvitoClient:
     # -- messenger. CONFIRMED (n8n-nodes-avito-api)
 
     def get_chats(self, user_id: str, **params: Any) -> dict:
-        return self.request(
-            "GET", f"/messenger/v2/accounts/{user_id}/chats", params=params
-        ).json()
+        return self.request("GET", f"/messenger/v2/accounts/{user_id}/chats", params=params).json()
 
     def get_messages(self, user_id: str, chat_id: str, **params: Any) -> dict:
         return self.request(
@@ -185,15 +169,13 @@ class AvitoClient:
                     ProbeResult(name, confidence, method, path, False, e.status, e.body[:200])
                 )
                 return None
-            except Exception as e:  # noqa: BLE001 — диагностика, глотаем всё осознанно
+            except Exception as e:
                 results.append(
                     ProbeResult(name, confidence, method, path, False, None, str(e)[:200])
                 )
                 return None
 
-        _probe(
-            "get_self", "CONFIRMED", "GET", "/core/v1/accounts/self", self.get_self
-        )
+        _probe("get_self", "CONFIRMED", "GET", "/core/v1/accounts/self", self.get_self)
 
         if user_id:
             _probe(
@@ -223,6 +205,19 @@ class AvitoClient:
                 "GET",
                 f"/messenger/v2/accounts/{user_id}/chats",
                 lambda: self.get_chats(user_id, limit=1),
+            )
+            _probe(
+                "get_operations_history",
+                "CANDIDATE",
+                "POST",
+                "/core/v1/accounts/operations_history/",
+                lambda: self.get_operations_history(
+                    user_id,
+                    dateTimeFrom="2026-01-01T00:00:00Z",
+                    dateTimeTo="2026-12-31T23:59:59Z",
+                    page=1,
+                    perPage=1,
+                ),
             )
 
         return results
