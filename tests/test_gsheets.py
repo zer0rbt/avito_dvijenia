@@ -105,7 +105,9 @@ def test_solika_drop_source_parses_titles_sizes_and_price(monkeypatch):
 
     corteiz = rows[1]
     assert corteiz.sizes_available == ["XS", "S"]
-    assert corteiz.price_purchase == 4500.0
+    # B-001: закупочная цена берётся из колонки "БЕЗ ВЫКУПА" (10), а не
+    # "ВЫКУП" (9) — у этой строки они различаются, 4650 против 4500.
+    assert corteiz.price_purchase == 4650.0
 
 
 def test_best_dropship_hoodies_source_treats_diamond_as_sold_out(monkeypatch):

@@ -51,14 +51,31 @@ class Settings(BaseSettings):
     tg_bot_token: str = ""
     tg_operator_chat_id: str = ""
 
+    # --- Telegram-аккаунт для выгрузки фото из истории канала (B-018) ---
+    # Это НЕ бот: боту история чужого канала недоступна. api_id/api_hash
+    # берутся на my.telegram.org, файл сессии живёт в secrets/ (gitignore).
+    tg_api_id: str = ""
+    tg_api_hash: str = ""
+    tg_session_name: str = "supplier_channel"
+
     # --- Google Sheets ---
     google_service_account_json: str = ""
     admin_sheet_id: str = ""
 
     # --- Режим оператора / предохранители ---
     dry_run_default: bool = True
+    # Остаток аванса за просмотры. API его не отдаёт (кошелёк из
+    # /balance/ — это другие деньги и он честно 0, B-003), поэтому значение
+    # ведёт оператор руками по данным ЛК. None = «неизвестно», и тогда
+    # avito/budget.py блокирует публикацию, а не гадает.
+    advance_rub: float | None = None
     min_balance_rub: int = Field(default=300, ge=0)
     max_active_listings: int = Field(default=100, ge=1)
+
+    @property
+    def tg_session_path(self) -> Path:
+        """Файл сессии Telethon = доступ к аккаунту, поэтому только secrets/."""
+        return BASE_DIR / "secrets" / f"{self.tg_session_name}.session"
 
     @property
     def feed_url(self) -> str:

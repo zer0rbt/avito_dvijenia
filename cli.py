@@ -156,9 +156,9 @@ def categories_dump(
 ) -> None:
     """Черновик категорий/полей Автозагрузки -> docs/categories.md.
 
-    ВАЖНО: пока avito/data/categories_draft.yaml не verified: true, это
-    черновик по открытым источникам, а не факт из ЛК аккаунта. См. план,
-    раздел "Категории Авито".
+    Схема живёт в avito/data/categories.yaml и сверена с официальными
+    шаблонами Авито (B-002). Публикацию всё ещё блокирует
+    require_verified(), пока в unresolved_required_fields что-то есть.
     """
     if action != "dump":
         console.print(f"[red]Неизвестное действие: {action}[/red]")
@@ -485,9 +485,10 @@ def budget_check() -> None:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
 
+    console.print(f"Кошелёк аккаунта: {status.wallet_rub:.0f} ₽ (просмотры списываются не с него)")
     if status.publish_allowed:
         console.print(
-            f"[green]Публикация разрешена.[/green] Баланс: {status.balance_rub:.0f} ₽ "
+            f"[green]Публикация разрешена.[/green] Аванс: {status.advance_rub:.0f} ₽ "
             f"(порог: {status.min_balance_rub} ₽)"
         )
     else:

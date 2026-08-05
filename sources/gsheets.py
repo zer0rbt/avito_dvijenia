@@ -64,9 +64,10 @@ class SolikaDropSource:
     РРЦ в этой таблице нет вообще — pricing.py (Э4) для товаров из этого
     источника всегда идёт по фоллбэку "закупка + 1500".
 
-    За price_purchase берём колонку "ВЫКУП" (9), а не "БЕЗ ВЫКУПА" (10) —
-    не подтверждено с заказчиком, какая из двух схем реально используется;
-    отмечено в docs/sources_snapshot.md как открытый вопрос.
+    За price_purchase берём колонку "БЕЗ ВЫКУПА" (10): заказчик подтвердил,
+    что работает по этой схеме (B-001). До подтверждения тут стояла колонка
+    "ВЫКУП" (9) — выбранная произвольно, и она давала другую закупочную цену,
+    то есть другую маржу на каждой карточке.
     """
 
     name = "gsheets:solika_drop"
@@ -96,7 +97,7 @@ class SolikaDropSource:
                 if cell.strip() == "✅"
             ]
             color = clean_title(row[8]) or None
-            price_purchase = parse_price_rub(row[9])
+            price_purchase = parse_price_rub(row[10])  # "БЕЗ ВЫКУПА", см. докстринг
             ship_city = clean_title(row[11]) or None
 
             out.append(

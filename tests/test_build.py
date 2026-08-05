@@ -91,7 +91,8 @@ def test_build_records_sizes_avito_on_product(session, tmp_path):
     build_listings_for_product(session, product, store)
 
     session.refresh(product)
-    assert product.sizes_avito == "S,M,L"
+    # строки справочника Авито, а не буквы поставщика (B-002)
+    assert product.sizes_avito == "46 (S),48 (M),50 (L)"
 
 
 def test_build_generates_photo_variations_from_raw_asset(session, tmp_path):

@@ -23,6 +23,7 @@ dependencies = [
     "numpy>=1.26",
     "lxml>=5.2",
     "pyyaml>=6.0",
+    "telethon>=1.36",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +90,9 @@ ignore = [
 # CLI и разовые скрипты печатают в консоль — это их работа, а не забытая отладка.
 "cli.py" = ["T20"]
 "scripts/*.py" = ["T20"]
+# Точка входа `python -m media.telegram_source login`: подсказка по запуску
+# адресована человеку в терминале, логгером её слать некуда.
+"media/telegram_source.py" = ["T20"]
 
 [tool.ruff.format]
 quote-style = "double"

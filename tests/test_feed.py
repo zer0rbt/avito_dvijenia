@@ -1,33 +1,23 @@
 from __future__ import annotations
 
-from avito.categories import CategoriesDoc
+import xml.etree.ElementTree as ET
+
 from avito.feed import build_feed_xml, validate_feed_xml
 from core.models import GeoCity, Listing, ListingState, Product
+from tests.conftest import categories_doc
 
-VERIFIED_CATEGORIES = CategoriesDoc(
-    verified=True,
-    verified_at="2026-08-02",
-    source_note="test fixture",
-    category_path="Личные вещи → Одежда, обувь, аксессуары",
-    common_fields={"Category": {"required": True, "value": "Личные вещи"}},
-    goods_types=[
-        {
-            "key": "mens_outerwear",
-            "label_ru": "Мужская одежда",
-            "avito_goods_type": "Мужская одежда",
-            "extra_fields": {},
-        }
-    ],
-    open_questions=[],
-)
+CATEGORIES = categories_doc()
 
 
 def _product(**overrides) -> Product:
     defaults = dict(
         id=1,
         supplier_item_id=1,
-        title="Balenciaga Arena",
-        avito_category="mens_outerwear",
+        title="Alexander McQueen Худи",
+        brand="Alexander McQueen",
+        color="Черный",
+        sizes_supplier="S,M,L",
+        avito_category="Худи",
         price_final=4500.0,
     )
     defaults.update(overrides)
@@ -41,7 +31,7 @@ def _listing(**overrides) -> Listing:
         city=GeoCity.MSK,
         internal_id="1-MSK-g1",
         state=ListingState.QUEUED,
-        title_rendered="Balenciaga Arena",
+        title_rendered="Alexander McQueen Худи",
         description_rendered="Описание",
         price_rendered=4500.0,
         photo_urls_rendered="https://cdn.example.com/photo1.jpg",
@@ -50,84 +40,123 @@ def _listing(**overrides) -> Listing:
     return Listing(**defaults)
 
 
-def test_build_feed_xml_includes_ready_listing():
-    product = _product()
-    listing = _listing()
+def _build(listing=None, product=None):
+    listing = listing or _listing()
+    product = product or _product()
+    return build_feed_xml([listing], {1: product}, categories=CATEGORIES)
 
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
 
+def test_feed_contains_every_required_tag():
+    result = _build()
     assert result.included_listing_ids == [1]
-    assert result.excluded == []
-    assert "<Id>1-MSK-g1</Id>" in result.xml
-    assert "Balenciaga Arena" in result.xml
-    assert "4500" in result.xml
-    assert "photo1.jpg" in result.xml
+
+    ad = ET.fromstring(result.xml).find("Ad")
+    for tag in CATEGORIES.required_tags:
+        if tag in CATEGORIES.unresolved_required_fields:
+            continue  # Delivery: значений не знаем, см. avito/feed.py
+        assert ad.find(tag) is not None, f"нет обязательного тега <{tag}>"
 
 
-def test_build_feed_xml_excludes_draft_listing():
-    product = _product()
-    listing = _listing(state=ListingState.DRAFT)
+def test_feed_uses_values_from_avito_dictionaries():
+    ad = ET.fromstring(_build().xml).find("Ad")
+    assert ad.findtext("Category") == "Одежда, обувь, аксессуары"
+    assert ad.findtext("GoodsType") == "Мужская одежда"
+    assert ad.findtext("Apparel") == "Кофты и футболки"
+    assert ad.findtext("GoodsSubType") == "Худи"
+    assert ad.findtext("Condition") == "Новое с биркой"
+    # NBSP, а не пробел — Авито сверяет строкой
+    assert ad.findtext("AdType") == "Товар приобретен на\xa0продажу"
 
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
 
+def test_size_is_single_avito_value_not_supplier_letter():
+    """Size у Авито — одно значение из справочника. S,M,L -> «48 (M)»."""
+    ad = ET.fromstring(_build().xml).find("Ad")
+    size = ad.findtext("Size")
+    assert size == "48 (M)"
+    assert size in CATEGORIES.allowed("Size")
+
+
+def test_supplier_color_is_mapped_to_dictionary_value():
+    ad = ET.fromstring(_build().xml).find("Ad")
+    assert ad.findtext("Color") == "Чёрный"  # из «Черный», через ё
+
+
+def test_images_use_confirmed_tag_shape():
+    ad = ET.fromstring(_build().xml).find("Ad")
+    images = ad.find("Images")
+    assert images is not None
+    assert [img.get("url") for img in images] == ["https://cdn.example.com/photo1.jpg"]
+
+
+def test_feed_excludes_draft_listing():
+    result = _build(listing=_listing(state=ListingState.DRAFT))
     assert result.included_listing_ids == []
-    assert result.excluded[0][0] == 1
-    assert "DRAFT" in result.excluded[0][1] or "state" in result.excluded[0][1]
+    assert "DRAFT" in result.excluded[0][1]
 
 
-def test_build_feed_xml_excludes_listing_without_category():
-    product = _product(avito_category=None)
-    listing = _listing()
-
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
-
-    assert result.included_listing_ids == []
-    assert "avito_category" in result.excluded[0][1]
-
-
-def test_build_feed_xml_excludes_listing_without_photos():
-    product = _product()
-    listing = _listing(photo_urls_rendered="")
-
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
-
+def test_feed_excludes_listing_without_photos():
+    result = _build(listing=_listing(photo_urls_rendered=""))
     assert result.included_listing_ids == []
     assert "фото" in result.excluded[0][1]
 
 
-def test_build_feed_xml_excludes_listing_with_unknown_category_key():
-    product = _product(avito_category="does_not_exist")
-    listing = _listing()
-
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
-
+def test_feed_excludes_product_without_brand():
+    result = _build(product=_product(brand=None))
     assert result.included_listing_ids == []
-    assert "неизвестный" in result.excluded[0][1]
+    assert "бренд" in result.excluded[0][1]
 
 
-def test_validate_feed_xml_passes_for_well_formed_feed():
-    product = _product()
-    listing = _listing()
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
-
-    assert validate_feed_xml(result.xml) == []
+def test_feed_excludes_product_without_goods_subtype():
+    result = _build(product=_product(avito_category=None))
+    assert result.included_listing_ids == []
+    assert "GoodsSubType" in result.excluded[0][1]
 
 
-def test_validate_feed_xml_reports_malformed_xml():
-    assert validate_feed_xml("<Ads><Ad><Id>1</Id></Ad>") != []
+def test_feed_excludes_goods_subtype_outside_dictionary():
+    result = _build(product=_product(avito_category="Ботинки"))
+    assert result.included_listing_ids == []
+    assert "справочник" in result.excluded[0][1]
 
 
-def test_validate_feed_xml_flags_missing_required_tag():
-    xml = '<?xml version="1.0"?><Ads><Ad><Id>1</Id><Title>X</Title></Ad></Ads>'
-    errors = validate_feed_xml(xml)
+def test_feed_excludes_unmappable_size():
+    result = _build(product=_product(sizes_supplier="S,42,L"))
+    assert result.included_listing_ids == []
+    assert "размер" in result.excluded[0][1]
+
+
+def test_validate_passes_for_well_formed_feed():
+    assert validate_feed_xml(_build().xml, categories=CATEGORIES) == []
+
+
+def test_validate_reports_malformed_xml():
+    assert validate_feed_xml("<Ads><Ad><Id>1</Id></Ad>", categories=CATEGORIES) != []
+
+
+def test_validate_flags_value_outside_dictionary():
+    xml = _build().xml.replace(
+        "<Condition>Новое с биркой</Condition>", "<Condition>Б/у</Condition>"
+    )
+    errors = validate_feed_xml(xml, categories=CATEGORIES)
+    assert any("Condition" in e for e in errors)
+
+
+def test_validate_flags_missing_required_tag():
+    xml = '<?xml version="1.0"?><Ads><Ad><Id>x</Id><Title>T</Title></Ad></Ads>'
+    errors = validate_feed_xml(xml, categories=CATEGORIES)
     assert any("Description" in e for e in errors)
+    assert any("фото" in e for e in errors)
 
 
-def test_build_feed_xml_escapes_special_characters():
-    product = _product()
-    listing = _listing(title_rendered='Товар <бренд> & "цена"')
+def test_validate_does_not_demand_unresolved_delivery_value():
+    """Delivery обязателен у Авито, но его допустимых значений мы не знаем,
+    поэтому локальный валидатор про него молчит — рубильник стоит в
+    require_verified(), а не здесь."""
+    errors = validate_feed_xml(_build().xml, categories=CATEGORIES)
+    assert not any("Delivery" in e for e in errors)
 
-    result = build_feed_xml([listing], {1: product}, categories=VERIFIED_CATEGORIES)
 
-    assert "<бренд>" not in result.xml
-    assert "&lt;бренд&gt;" in result.xml
+def test_special_characters_are_escaped():
+    result = _build(listing=_listing(title_rendered='Худи <b> & "цена"'))
+    assert "&lt;b&gt;" in result.xml
+    ad = ET.fromstring(result.xml).find("Ad")
+    assert ad.findtext("Title") == 'Худи <b> & "цена"'

@@ -11,10 +11,13 @@ from core.models import AuditLogEntry, Product, ProductStatus, SupplierItem
 
 
 def _supplier_item(**kwargs) -> SupplierItem:
+    # В названии есть тип товара («Худи») — так устроены реальные строки
+    # прайса («ХУДИ ALEXANDER MCQUEEN»), и по нему avito/classify.py
+    # определяет GoodsSubType. Без него карточка уходит в NEEDS_REVIEW.
     defaults = dict(
         source_key="s:1",
         source_type="gsheets",
-        raw_title="Balenciaga Arena",
+        raw_title="Худи Balenciaga Arena",
         brand="Balenciaga",
         color="Чёрный",
         sizes_available="S,M,L",
@@ -46,11 +49,39 @@ def test_evaluate_auto_status_needs_review_when_price_missing():
     assert reason == "price_missing"
 
 
+def test_evaluate_auto_status_needs_review_when_goods_subtype_unknown():
+    """Категорию Авито не определить по названию — публиковать нельзя:
+    GoodsSubType обязательный тег фида (B-010)."""
+    item = _supplier_item(raw_title="Balenciaga Arena")
+    status, reason = evaluate_auto_status(item)
+    assert status == ProductStatus.NEEDS_REVIEW
+    assert reason == "goods_subtype_unknown"
+
+
+def test_evaluate_auto_status_needs_review_when_size_not_in_avito_dictionary():
+    """Размер, которого нет в справочнике Авито, лучше поймать здесь, чем
+    из отчёта Автозагрузки после публикации."""
+    item = _supplier_item(sizes_available="S,42")
+    status, reason = evaluate_auto_status(item)
+    assert status == ProductStatus.NEEDS_REVIEW
+    assert reason.startswith("size_unmapped:")
+
+
 def test_evaluate_auto_status_approved_when_all_signals_present():
     item = _supplier_item()
     status, reason = evaluate_auto_status(item)
     assert status == ProductStatus.APPROVED
     assert reason is None
+
+
+def test_sync_fills_avito_category_from_title(session):
+    session.add(_supplier_item(raw_title="ЗИП ХУДИ MARTINE ROSE"))
+    session.commit()
+
+    sync_products_from_supplier_items(session)
+
+    product = session.exec(select(Product)).one()
+    assert product.avito_category == "Худи"
 
 
 def test_sync_creates_product_per_supplier_item(session):

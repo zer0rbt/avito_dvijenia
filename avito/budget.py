@@ -22,7 +22,16 @@ class BudgetCheckError(RuntimeError):
 
 @dataclass
 class BudgetStatus:
-    balance_rub: float
+    """wallet_rub и advance_rub — РАЗНЫЕ деньги, и путать их дорого.
+
+    wallet_rub — кошелёк аккаунта из `/core/v1/accounts/{id}/balance/`.
+    advance_rub — аванс, с которого списываются просмотры; API его не отдаёт,
+    значение ведёт оператор через ADVANCE_RUB (см. B-003).
+    Решение о публикации принимается по advance_rub.
+    """
+
+    wallet_rub: float
+    advance_rub: float | None
     min_balance_rub: int
     publish_allowed: bool
     reason: str | None = None
@@ -45,19 +54,41 @@ def check_budget(
         if owns_client:
             client.close()
 
-    # B-003: с этого эндпоинта на реальном аккаунте оба поля отдают 0 —
-    # складываем оба, чтобы не потерять деньги, если это окажется вопросом
-    # формата, а не факта отсутствия средств.
-    balance_rub = float(balance.get("real", 0) or 0) + float(balance.get("bonus", 0) or 0)
+    wallet_rub = float(balance.get("real", 0) or 0) + float(balance.get("bonus", 0) or 0)
 
-    if balance_rub < settings.min_balance_rub:
+    # B-003 закрыт по факту: заказчик подтвердил, что кошелёк действительно 0,
+    # а аванс за просмотры (~900 ₽) живёт отдельно и через этот эндпоинт не
+    # виден. Значит сверять порог с wallet_rub бессмысленно: он всегда 0 и
+    # всегда заблокирует публикацию.
+    #
+    # Подтверждённого эндпоинта под аванс у нас нет, поэтому источник правды —
+    # то, что оператор увидел в ЛК и вписал в ADVANCE_RUB. Пока значение не
+    # выставлено, публикация заблокирована: это безопасная сторона ошибки.
+    if settings.advance_rub is None:
         return BudgetStatus(
-            balance_rub=balance_rub,
+            wallet_rub=wallet_rub,
+            advance_rub=None,
             min_balance_rub=settings.min_balance_rub,
             publish_allowed=False,
-            reason=f"баланс {balance_rub:.0f} ₽ ниже порога {settings.min_balance_rub} ₽",
+            reason=(
+                f"кошелёк {wallet_rub:.0f} ₽; аванс за просмотры этот эндпоинт не "
+                "показывает, а ADVANCE_RUB в .env не задан — публиковать вслепую "
+                "нельзя. Посмотреть остаток аванса в ЛК и вписать ADVANCE_RUB."
+            ),
+        )
+
+    if settings.advance_rub < settings.min_balance_rub:
+        return BudgetStatus(
+            wallet_rub=wallet_rub,
+            advance_rub=settings.advance_rub,
+            min_balance_rub=settings.min_balance_rub,
+            publish_allowed=False,
+            reason=(f"аванс {settings.advance_rub:.0f} ₽ ниже порога {settings.min_balance_rub} ₽"),
         )
 
     return BudgetStatus(
-        balance_rub=balance_rub, min_balance_rub=settings.min_balance_rub, publish_allowed=True
+        wallet_rub=wallet_rub,
+        advance_rub=settings.advance_rub,
+        min_balance_rub=settings.min_balance_rub,
+        publish_allowed=True,
     )

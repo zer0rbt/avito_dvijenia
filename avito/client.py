@@ -112,25 +112,39 @@ class AvitoClient:
         """CANDIDATE: POST /stats/v2/accounts/{user_id}/spendings (n8n-nodes-avito-api)."""
         return self.request("POST", f"/stats/v2/accounts/{user_id}/spendings", json=payload).json()
 
-    # -- autoload. CONFIRMED только READ-эндпоинты (совпали в covox/avito_api и avito_api2)
+    # -- autoload.
+    #
+    # Пути исправлены 03.08.2026 живым перебором (B-004). Раньше здесь стояли
+    # `/autoload/v1/accounts/{user_id}/...`, взятые из сторонних клиентов, и
+    # они отдавали 404 «This route is temporarily unavailable» — что мы
+    # ошибочно списывали на «Автозагрузка ещё не подключена». Автозагрузку
+    # подключили, 404 остался, и перебор показал настоящую картину:
+    #
+    #   /autoload/v1/accounts/{id}/reports/  -> 404 "This route is temporarily unavailable"
+    #   /autoload/v1/reports                 -> 404 "no Route matched with those values"
+    #   /autoload/v2/reports                 -> 401 "authorization required"   <- маршрут ЕСТЬ
+    #   /autoload/v2/profile                 -> 403 "Получение профиля недоступно."
+    #
+    # То есть актуальная версия — v2 и БЕЗ accounts/{user_id} в пути. 401 на
+    # v2/reports при рабочем токене (get_self/get_balance/get_chats на нём же
+    # отвечают 200) означает, что токену не хватает scope на автозагрузку, а
+    # не что путь неверный. Отсюда user_id в сигнатурах больше не нужен.
+    #
+    # AUTH-GAP: пока scope не выдан, эти методы будут падать 401. Что именно
+    # включить в ЛК (или переходить ли на authorization_code вместо
+    # client_credentials) — открытый вопрос, см. B-004.
 
-    def get_autoload_item(self, user_id: str, ad_id: str) -> dict:
-        """GET /autoload/v1/accounts/{user_id}/items/{ad_id}/ — статус выгрузки объявления."""
-        return self.request("GET", f"/autoload/v1/accounts/{user_id}/items/{ad_id}/").json()
+    def get_autoload_reports(self, **params: Any) -> dict:
+        """GET /autoload/v2/reports — список отчётов о выгрузках."""
+        return self.request("GET", "/autoload/v2/reports", params=params).json()
 
-    def get_autoload_last_report(self, user_id: str) -> dict:
-        """GET /autoload/v1/accounts/{user_id}/reports/last_report/"""
-        return self.request("GET", f"/autoload/v1/accounts/{user_id}/reports/last_report/").json()
+    def get_autoload_last_report(self) -> dict:
+        """GET /autoload/v2/reports/last_report — последний отчёт."""
+        return self.request("GET", "/autoload/v2/reports/last_report").json()
 
-    def get_autoload_report(self, user_id: str, report_id: str) -> dict:
-        """GET /autoload/v1/accounts/{user_id}/reports/{report_id}/"""
-        return self.request("GET", f"/autoload/v1/accounts/{user_id}/reports/{report_id}/").json()
-
-    def get_autoload_reports(self, user_id: str, **params: Any) -> dict:
-        """GET /autoload/v1/accounts/{user_id}/reports/"""
-        return self.request(
-            "GET", f"/autoload/v1/accounts/{user_id}/reports/", params=params
-        ).json()
+    def get_autoload_report(self, report_id: str) -> dict:
+        """GET /autoload/v2/reports/{report_id} — отчёт по id."""
+        return self.request("GET", f"/autoload/v2/reports/{report_id}").json()
 
     # -- messenger. CONFIRMED (n8n-nodes-avito-api)
 
@@ -187,17 +201,17 @@ class AvitoClient:
             )
             _probe(
                 "get_autoload_last_report",
-                "CONFIRMED",
+                "PATH OK / AUTH GAP",
                 "GET",
-                f"/autoload/v1/accounts/{user_id}/reports/last_report/",
-                lambda: self.get_autoload_last_report(user_id),
+                "/autoload/v2/reports/last_report",
+                self.get_autoload_last_report,
             )
             _probe(
                 "get_autoload_reports",
-                "CONFIRMED",
+                "PATH OK / AUTH GAP",
                 "GET",
-                f"/autoload/v1/accounts/{user_id}/reports/",
-                lambda: self.get_autoload_reports(user_id, per_page=1, page=1),
+                "/autoload/v2/reports",
+                lambda: self.get_autoload_reports(per_page=1, page=1),
             )
             _probe(
                 "get_chats",

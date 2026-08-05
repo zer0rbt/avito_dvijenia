@@ -3,35 +3,14 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import web.app as web_app_module
-from avito.categories import CategoriesDoc
 from core.models import GeoCity, Listing, ListingState, Product, ProductStatus
+from tests.conftest import categories_doc
 
-UNVERIFIED = CategoriesDoc(
-    verified=False,
-    verified_at=None,
-    source_note="черновик",
-    category_path="x",
-    common_fields={},
-    goods_types=[],
-    open_questions=[],
-)
-
-VERIFIED = CategoriesDoc(
-    verified=True,
-    verified_at="2026-08-02",
-    source_note="test",
-    category_path="x",
-    common_fields={"Category": {"required": True, "value": "Личные вещи"}},
-    goods_types=[
-        {
-            "key": "mens_outerwear",
-            "label_ru": "x",
-            "avito_goods_type": "Мужская одежда",
-            "extra_fields": {},
-        }
-    ],
-    open_questions=[],
-)
+UNVERIFIED = categories_doc(verified=False)
+# Delivery в боевом файле ещё не заполнен, поэтому «полностью готовая» схема
+# для теста — это реальная схема с очищенным списком нерешённых полей.
+VERIFIED = categories_doc(unresolved_required_fields=[])
+UNRESOLVED_FIELD = categories_doc()
 
 
 def test_health_endpoint():
@@ -48,33 +27,51 @@ def test_feed_xml_returns_503_when_categories_not_verified(monkeypatch):
     assert resp.status_code == 503
 
 
-def test_feed_xml_returns_xml_when_categories_verified(monkeypatch, session):
+def test_feed_xml_returns_503_while_required_field_values_unknown(monkeypatch):
+    """Схема сверена, но у Delivery нет допустимых значений — наружу такой
+    фид не отдаём (см. require_verified)."""
+    monkeypatch.setattr(web_app_module, "load_categories", lambda: UNRESOLVED_FIELD)
+    client = TestClient(web_app_module.app)
+    resp = client.get("/feed.xml")
+    assert resp.status_code == 503
+    assert "Delivery" in resp.json()["detail"]
+
+
+def _seed_publishable(session) -> None:
+    session.add(
+        Product(
+            id=1,
+            supplier_item_id=1,
+            title="Alexander McQueen Худи",
+            brand="Alexander McQueen",
+            color="Черный",
+            sizes_supplier="S,M,L",
+            status=ProductStatus.APPROVED,
+            avito_category="Худи",
+            price_final=2500.0,
+        )
+    )
+    session.add(
+        Listing(
+            product_id=1,
+            city=GeoCity.MSK,
+            internal_id="1-MSK-g1",
+            state=ListingState.QUEUED,
+            title_rendered="Alexander McQueen Худи",
+            description_rendered="Описание",
+            price_rendered=2500.0,
+            photo_urls_rendered="https://cdn.example.com/a.jpg",
+        )
+    )
+    session.commit()
+
+
+def test_feed_xml_returns_xml_when_schema_fully_resolved(monkeypatch, session):
     # session-фикстура уже подменила core.db.engine; web.app.get_session —
     # тот же объект core.db.get_session, так что дополнительный monkeypatch
     # не нужен, БД внутри запроса будет той же in-memory.
     monkeypatch.setattr(web_app_module, "load_categories", lambda: VERIFIED)
-
-    product = Product(
-        id=1,
-        supplier_item_id=1,
-        title="Товар",
-        status=ProductStatus.APPROVED,
-        avito_category="mens_outerwear",
-        price_final=2500.0,
-    )
-    session.add(product)
-    listing = Listing(
-        product_id=1,
-        city=GeoCity.MSK,
-        internal_id="1-MSK-g1",
-        state=ListingState.QUEUED,
-        title_rendered="Товар",
-        description_rendered="Описание",
-        price_rendered=2500.0,
-        photo_urls_rendered="https://cdn.example.com/a.jpg",
-    )
-    session.add(listing)
-    session.commit()
+    _seed_publishable(session)
 
     client = TestClient(web_app_module.app)
     resp = client.get("/feed.xml")
@@ -82,6 +79,7 @@ def test_feed_xml_returns_xml_when_categories_verified(monkeypatch, session):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/xml")
     assert b"<Id>1-MSK-g1</Id>" in resp.content
+    assert "Мужская одежда".encode() in resp.content
 
 
 def test_media_endpoint_rejects_path_traversal(tmp_path, monkeypatch):

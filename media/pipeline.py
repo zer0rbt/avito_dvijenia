@@ -13,6 +13,7 @@ MediaAsset — реестр, а не подмена SupplierItem.photo_urls: и�
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
@@ -21,6 +22,8 @@ from core.models import MediaAsset, MediaAssetKind, SupplierItem
 from media.fetch import fetch_photo_bytes, fetch_post_photo_urls
 from media.phash import compute_phash
 from media.store import MediaStore, content_key
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,7 +53,15 @@ def sync_media_for_supplier_items(
             continue
 
         source_urls = _resolve_source_urls(item)
+
+        # Пост вышел из окна веб-превью — пробуем историю канала через
+        # Telethon (B-018). Отдаёт готовые байты, а не ссылки: медиа-URL
+        # Telegram подписанные и временные.
+        telethon_photos: list[bytes] = []
         if not source_urls:
+            telethon_photos = _resolve_telethon_photos(item)
+
+        if not source_urls and not telethon_photos:
             summary.skipped_no_source.append(item.id)
             continue
 
@@ -59,7 +70,10 @@ def sync_media_for_supplier_items(
             continue
 
         try:
-            saved = _fetch_and_store(session, store, item, source_urls)
+            if source_urls:
+                saved = _fetch_and_store(session, store, item, source_urls)
+            else:
+                saved = _store_photo_bytes(session, store, item, telethon_photos)
         except Exception as e:  # сеть/битый файл — не должно ронять весь синк
             summary.failed[item.id] = str(e)
             continue
@@ -93,23 +107,63 @@ def _resolve_source_urls(item: SupplierItem) -> list[str]:
     return []
 
 
+def _resolve_telethon_photos(item: SupplierItem) -> list[bytes]:
+    """Запасной путь, когда пост уже вышел из окна веб-превью (B-018).
+
+    Telethon подключается только если он настроен: без TG_API_ID/TG_API_HASH
+    молча возвращаем пусто, а не роняем весь синк — большая часть команд
+    проекта в аккаунте Telegram не нуждается.
+    """
+    if not item.post_url:
+        return []
+    try:
+        from media.telegram_source import TelethonNotConfiguredError, fetch_post_photo_bytes
+    except ImportError:
+        return []
+    try:
+        return fetch_post_photo_bytes(item.post_url)
+    except TelethonNotConfiguredError as e:
+        logger.debug("Telethon недоступен для %s: %s", item.post_url, e)
+        return []
+
+
 def _fetch_and_store(
     session: Session, store: MediaStore, item: SupplierItem, source_urls: list[str]
 ) -> list[MediaAsset]:
     saved: list[MediaAsset] = []
     for source_url in source_urls:
         data = fetch_photo_bytes(source_url)
-        key = content_key(data, prefix=f"raw/supplier_item_{item.id}")
-        public_url = store.public_url(key) if store.exists(key) else store.save(key, data)
-
-        asset = MediaAsset(
-            supplier_item_id=item.id,
-            kind=MediaAssetKind.RAW,
-            source_url=source_url,
-            storage_key=key,
-            public_url=public_url,
-            phash=compute_phash(data),
-        )
-        session.add(asset)
-        saved.append(asset)
+        saved.append(_store_one(session, store, item, data, source_url=source_url))
     return saved
+
+
+def _store_photo_bytes(
+    session: Session, store: MediaStore, item: SupplierItem, photos: list[bytes]
+) -> list[MediaAsset]:
+    """То же, что _fetch_and_store, но данные уже скачаны (Telethon).
+    source_url ставим на пост канала: ссылки на само медиа временные, а
+    пост — стабильный адрес, по которому фото можно найти снова."""
+    return [_store_one(session, store, item, data, source_url=item.post_url) for data in photos]
+
+
+def _store_one(
+    session: Session,
+    store: MediaStore,
+    item: SupplierItem,
+    data: bytes,
+    *,
+    source_url: str | None,
+) -> MediaAsset:
+    key = content_key(data, prefix=f"raw/supplier_item_{item.id}")
+    public_url = store.public_url(key) if store.exists(key) else store.save(key, data)
+
+    asset = MediaAsset(
+        supplier_item_id=item.id,
+        kind=MediaAssetKind.RAW,
+        source_url=source_url,
+        storage_key=key,
+        public_url=public_url,
+        phash=compute_phash(data),
+    )
+    session.add(asset)
+    return asset

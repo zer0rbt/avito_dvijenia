@@ -28,8 +28,25 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import core.db as db_module
+from avito.categories import CategoriesDoc, load_categories
 
 IN_MEMORY_URL = "sqlite://"
+
+
+def categories_doc(**overrides) -> CategoriesDoc:
+    """Реальная схема из avito/data/categories.yaml с точечными правками.
+
+    Именно реальная, а не самодельная заглушка: тогда тесты фида ловят
+    расхождение между кодом и справочником, который реально уедет в Авито.
+    load_categories() каждый раз читает файл заново, так что правки одного
+    теста не текут в другой.
+    """
+    doc = load_categories()
+    for key, value in overrides.items():
+        if not hasattr(doc, key):
+            raise AttributeError(f"CategoriesDoc не имеет поля {key!r}")
+        setattr(doc, key, value)
+    return doc
 
 
 @pytest.fixture(autouse=True)

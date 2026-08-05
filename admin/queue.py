@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
+from avito.classify import classify_goods_subtype
+from avito.sizes import map_sizes
 from core.approval import log_audit
 from core.models import AuditLogEntry, Product, ProductStatus, SupplierItem, SyncState, utcnow
 from pricing import compute_final_price
@@ -46,17 +48,24 @@ class QueueSyncSummary:
 
 def evaluate_auto_status(item: SupplierItem) -> tuple[ProductStatus, str | None]:
     """Правила из плана ("Админ-панель: очередь модерации"), в объёме,
-    для которого на Э2 есть реальный сигнал в данных.
+    для которого есть реальный сигнал в данных.
 
-    Специально НЕ проверяем здесь goods_type и наличие фото: goods_type
-    сейчас не проставляет ни один источник (B-010), фото появляются только
-    в Э3 (media/) — включение этих проверок сейчас увело бы 100% товаров
-    в NEEDS_REVIEW, что не "автоматическое решение", а просто отключённый
-    фильтр. Вернутся сюда, когда у этих полей появится реальный источник данных.
+    Наличие фото по-прежнему НЕ проверяем: фото есть у одной позиции из 82
+    (B-018), проверка увела бы весь каталог в NEEDS_REVIEW — это не фильтр,
+    а его отсутствие. Вернётся, когда телетон-выгрузка даст фото.
+
+    Размеры проверяем дважды: сначала что они вообще есть, потом что они
+    маппятся в справочник Авито (avito/sizes.py). Размер, которого нет в
+    справочнике, — это карточка, которую Автозагрузка отклонит, и узнать
+    об этом лучше здесь, а не из отчёта после публикации.
     """
     sizes = [s for s in item.sizes_available.split(",") if s]
     if not sizes:
         return ProductStatus.NEEDS_REVIEW, "no_sizes"
+
+    _mapped, unmapped = map_sizes(sizes)
+    if unmapped:
+        return ProductStatus.NEEDS_REVIEW, f"size_unmapped:{','.join(unmapped)}"
 
     if not item.brand:
         return ProductStatus.NEEDS_REVIEW, "brand_unknown"
@@ -64,6 +73,10 @@ def evaluate_auto_status(item: SupplierItem) -> tuple[ProductStatus, str | None]
     price = compute_final_price(price_rrc=item.price_rrc, price_purchase=item.price_purchase)
     if price is None:
         return ProductStatus.NEEDS_REVIEW, "price_missing"
+
+    subtype, _matched = classify_goods_subtype(item.raw_title)
+    if subtype is None:
+        return ProductStatus.NEEDS_REVIEW, "goods_subtype_unknown"
 
     return ProductStatus.APPROVED, None
 
@@ -80,6 +93,7 @@ def _product_differs_from_supplier_item(product: Product, item: SupplierItem) ->
         or product.sizes_supplier != item.sizes_available
         or product.price_purchase != item.price_purchase
         or product.price_rrc != item.price_rrc
+        or product.avito_category != classify_goods_subtype(item.raw_title)[0]
     )
 
 
@@ -93,6 +107,11 @@ def _sync_fields_from_supplier_item(product: Product, item: SupplierItem) -> Non
     product.price_final = compute_final_price(
         price_rrc=item.price_rrc, price_purchase=item.price_purchase
     )
+    # GoodsSubType Авито ("Худи"/"Футболка"/...) — то, что уедет в фид тегом
+    # <GoodsSubType>, см. avito/feed.py. Держим на Product, а не пересчитываем
+    # при сборке фида: оператор должен видеть категорию в таблице-пульте и
+    # иметь возможность поправить её руками.
+    product.avito_category = classify_goods_subtype(item.raw_title)[0]
     product.updated_at = utcnow()
 
 
@@ -138,6 +157,7 @@ def sync_products_from_supplier_items(session: Session) -> QueueSyncSummary:
                 price_final=compute_final_price(
                     price_rrc=item.price_rrc, price_purchase=item.price_purchase
                 ),
+                avito_category=classify_goods_subtype(item.raw_title)[0],
             )
             status, reason = evaluate_auto_status(item)
             product.status = status

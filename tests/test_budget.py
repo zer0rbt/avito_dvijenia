@@ -27,42 +27,63 @@ class _FailingClient:
         pass
 
 
-def _settings(min_balance_rub: int = 300) -> Settings:
-    return Settings(min_balance_rub=min_balance_rub)
+def _settings(**kwargs) -> Settings:
+    defaults = dict(min_balance_rub=300, advance_rub=None)
+    defaults.update(kwargs)
+    return Settings(**defaults)
 
 
-def test_check_budget_blocks_publish_below_threshold():
-    client = _FakeClient({"real": 0, "bonus": 0})
-    status = check_budget(user_id="1", settings=_settings(300), client=client)
+ZERO_WALLET = {"real": 0, "bonus": 0}
+
+
+def test_blocks_when_advance_is_unknown():
+    """Главный случай на этом аккаунте: кошелёк 0, аванс API не отдаёт.
+    Не зная аванса, публиковать нельзя (B-003)."""
+    status = check_budget(user_id="1", settings=_settings(), client=_FakeClient(ZERO_WALLET))
 
     assert status.publish_allowed is False
-    assert status.balance_rub == 0
-    assert "300" in status.reason
+    assert status.advance_rub is None
+    assert "ADVANCE_RUB" in status.reason
 
 
-def test_check_budget_allows_publish_above_threshold():
-    client = _FakeClient({"real": 900, "bonus": 0})
-    status = check_budget(user_id="1", settings=_settings(300), client=client)
+def test_zero_wallet_does_not_block_when_advance_is_sufficient():
+    """Кошелёк и аванс — разные деньги: нулевой кошелёк сам по себе не повод
+    блокировать, если оператор указал остаток аванса."""
+    status = check_budget(
+        user_id="1", settings=_settings(advance_rub=900), client=_FakeClient(ZERO_WALLET)
+    )
 
     assert status.publish_allowed is True
-    assert status.balance_rub == 900
-    assert status.reason is None
+    assert status.wallet_rub == 0
+    assert status.advance_rub == 900
 
 
-def test_check_budget_sums_real_and_bonus():
-    client = _FakeClient({"real": 200, "bonus": 150})
-    status = check_budget(user_id="1", settings=_settings(300), client=client)
+def test_blocks_when_advance_below_threshold():
+    status = check_budget(
+        user_id="1",
+        settings=_settings(advance_rub=100, min_balance_rub=300),
+        client=_FakeClient(ZERO_WALLET),
+    )
 
-    assert status.balance_rub == 350
-    assert status.publish_allowed is True
+    assert status.publish_allowed is False
+    assert "100" in status.reason and "300" in status.reason
 
 
-def test_check_budget_raises_on_api_error():
+def test_wallet_sums_real_and_bonus_for_reporting():
+    status = check_budget(
+        user_id="1",
+        settings=_settings(advance_rub=900),
+        client=_FakeClient({"real": 200, "bonus": 150}),
+    )
+    assert status.wallet_rub == 350
+
+
+def test_raises_on_api_error():
     with pytest.raises(BudgetCheckError):
-        check_budget(user_id="1", settings=_settings(300), client=_FailingClient())
+        check_budget(user_id="1", settings=_settings(), client=_FailingClient())
 
 
-def test_check_budget_does_not_close_externally_provided_client():
-    client = _FakeClient({"real": 500, "bonus": 0})
-    check_budget(user_id="1", settings=_settings(300), client=client)
+def test_does_not_close_externally_provided_client():
+    client = _FakeClient(ZERO_WALLET)
+    check_budget(user_id="1", settings=_settings(advance_rub=900), client=client)
     assert client.closed is False
