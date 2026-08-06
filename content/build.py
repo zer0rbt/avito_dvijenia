@@ -18,7 +18,15 @@ from avito.sizes import map_sizes
 from content.descriptions import render_description
 from content.geo import photo_variate_seed, select_raw_assets_for_city
 from content.titles import render_title
-from core.models import GeoCity, Listing, MediaAsset, MediaAssetKind, Product, utcnow
+from core.models import (
+    GeoCity,
+    Listing,
+    ListingState,
+    MediaAsset,
+    MediaAssetKind,
+    Product,
+    utcnow,
+)
 from media.store import MediaStore, content_key
 from media.variate import variate
 
@@ -28,6 +36,13 @@ class BuildSummary:
     created: list[int] = field(default_factory=list)  # listing_id
     skipped_existing: list[tuple[int, str]] = field(default_factory=list)  # (product_id, city)
     skipped_unmapped_sizes: list[int] = field(default_factory=list)  # product_id
+
+
+@dataclass
+class PhotoRefreshSummary:
+    filled: list[int] = field(default_factory=list)  # listing_id, фото проставлены
+    no_raw: list[int] = field(default_factory=list)  # product_id, исходных фото нет
+    already_had: list[int] = field(default_factory=list)  # listing_id
 
 
 def build_listings_for_product(
@@ -88,6 +103,71 @@ def build_listings_for_product(
         summary.created.append(listing.id)
 
     session.commit()
+    return summary
+
+
+def refresh_photos_for_product(
+    session: Session, product: Product, store: MediaStore, *, dry_run: bool = True
+) -> PhotoRefreshSummary:
+    """Дозаполнить фото у уже собранных черновиков.
+
+    Зачем отдельная функция: `build_listings_for_product` идемпотентна по
+    (product_id, city) и существующий Listing пропускает целиком. Пока фото
+    приезжали раньше текста, это было нормально. Но фото поставщика
+    появляются позже (B-018: веб-превью отдаёт только последние ~20 постов,
+    остальное доехало выгрузкой канала), и тогда карточка навсегда осталась
+    бы без `Images` — а без них Автозагрузка её не примет.
+
+    Трогаем только `DRAFT`: у карточки, уже уехавшей в Авито, подменять
+    фото — это работа перезалива (Э7), а не дозаполнения.
+    """
+    summary = PhotoRefreshSummary()
+    assert product.id is not None
+
+    listings = list(
+        session.exec(
+            select(Listing)
+            .where(Listing.product_id == product.id)
+            .where(Listing.state == ListingState.DRAFT)
+        )
+    )
+    todo = [listing for listing in listings if not listing.photo_urls_rendered]
+    summary.already_had.extend(
+        listing.id for listing in listings if listing.photo_urls_rendered and listing.id
+    )
+    if not todo:
+        return summary
+
+    raw_assets = list(
+        session.exec(
+            select(MediaAsset)
+            .where(MediaAsset.supplier_item_id == product.supplier_item_id)
+            .where(MediaAsset.kind == MediaAssetKind.RAW)
+        )
+    )
+    if not raw_assets:
+        summary.no_raw.append(product.id)
+        return summary
+
+    for listing in todo:
+        if listing.id is None:
+            continue
+        if dry_run:
+            summary.filled.append(listing.id)
+            continue
+
+        photo_urls = _render_photos_for_city(
+            session, store, product_id=product.id, city=listing.city, raw_assets=raw_assets
+        )
+        if not photo_urls:
+            continue
+        listing.photo_urls_rendered = ",".join(photo_urls)
+        listing.updated_at = utcnow()
+        session.add(listing)
+        summary.filled.append(listing.id)
+
+    if not dry_run:
+        session.commit()
     return summary
 
 

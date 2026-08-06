@@ -27,7 +27,7 @@ from avito.client import AvitoApiError, AvitoClient
 from avito.feed import build_feed_xml, validate_feed_xml
 from avito.sizes import map_sizes
 from bot.registry import build_executor
-from content.build import build_listings_for_product
+from content.build import build_listings_for_product, refresh_photos_for_product
 from content.dedup import is_too_similar
 from content.descriptions import render_description
 from content.humanize import HumanizeViolationError
@@ -345,6 +345,40 @@ def content_build() -> None:
     )
 
 
+@content_app.command("refresh-photos")
+def content_refresh_photos(
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--write", help="По умолчанию только считает, БД и MediaStore не трогает."
+    ),
+) -> None:
+    """Дозаполнить фото у уже собранных черновиков.
+
+    Нужно, когда фото приехали позже текста: `content build` идемпотентен
+    по (товар, город) и существующую карточку пропускает целиком, так что
+    сама по себе она фото уже не получит. Трогает только DRAFT.
+    """
+    init_db()
+    store = get_media_store()
+
+    with get_session() as session:
+        products = list(
+            session.exec(select(Product).where(Product.status == ProductStatus.APPROVED))
+        )
+        filled = no_raw = already = 0
+        for product in products:
+            summary = refresh_photos_for_product(session, product, store, dry_run=dry_run)
+            filled += len(summary.filled)
+            no_raw += len(summary.no_raw)
+            already += len(summary.already_had)
+
+    console.print(
+        f"товаров APPROVED: {len(products)} | карточек дозаполнено: {filled} | "
+        f"уже были с фото: {already} | товаров без исходных фото: {no_raw}"
+    )
+    if dry_run:
+        console.print("\n[yellow]dry-run: ничего не записано. Повторить с --write.[/yellow]")
+
+
 media_app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(media_app, name="media")
 
@@ -587,6 +621,24 @@ def planner_run(
     """
     init_db()
     settings = get_settings()
+
+    # Бюджет спрашиваем до планирования, а не после. plan_next_batch считает
+    # только лимит активных карточек (max_active_listings) — про деньги он не
+    # знает, это видно по его сигнатуре. Без этой проверки прогон дошёл бы до
+    # кнопки в боте, ни слова не сказав про аванс, а тариф — оплата за
+    # просмотры (план, "Режим оператора": перед каждым прогоном фида
+    # проверяется баланс).
+    if not settings.avito_user_id:
+        console.print("[red]AVITO_USER_ID не задан в .env — бюджет не проверить[/red]")
+        raise typer.Exit(1)
+    try:
+        budget = check_budget(user_id=settings.avito_user_id)
+    except BudgetCheckError as e:
+        console.print(f"[red]Бюджет не проверить: {e}[/red]")
+        raise typer.Exit(1) from e
+    if not budget.publish_allowed:
+        console.print(f"[red]Публикация заблокирована: {budget.reason}[/red]")
+        raise typer.Exit(1)
 
     with get_session() as session:
         already_active = session.exec(

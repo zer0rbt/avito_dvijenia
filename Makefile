@@ -1,4 +1,4 @@
-.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build feed-build budget-check planner-run bot web
+.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build content-refresh-photos feed-build budget-check planner-run bot web
 
 help:
 	@echo "setup        - создать venv и поставить зависимости"
@@ -15,6 +15,7 @@ help:
 	@echo "media-sync   - скачать фото поставщика в MediaStore, показать диф (dry-run)"
 	@echo "media-sync-write - то же, но реально скачать и записать MediaAsset"
 	@echo "content-build - собрать Listing (5 гео-копий) для APPROVED-товаров"
+	@echo "content-refresh-photos - дозаполнить фото у уже собранных черновиков (dry-run)"
 	@echo "feed-build   - собрать и провалидировать XML фида (без обращения к Авито)"
 	@echo "budget-check - живой read-only запрос баланса, проверка порога min_balance_rub"
 	@echo "planner-run  - выбрать DRAFT-листинги под бюджет, запросить PUBLISH (dry-run)"
@@ -62,6 +63,9 @@ media-sync-write:
 
 content-build:
 	bash scripts/run_cli.sh content build
+
+content-refresh-photos:
+	bash scripts/run_cli.sh content refresh-photos
 
 feed-build:
 	bash scripts/run_cli.sh feed build

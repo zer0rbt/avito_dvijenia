@@ -5,8 +5,16 @@ import io
 from PIL import Image
 from sqlmodel import select
 
-from content.build import build_listings_for_product
-from core.models import GeoCity, Listing, MediaAsset, MediaAssetKind, Product, ProductStatus
+from content.build import build_listings_for_product, refresh_photos_for_product
+from core.models import (
+    GeoCity,
+    Listing,
+    ListingState,
+    MediaAsset,
+    MediaAssetKind,
+    Product,
+    ProductStatus,
+)
 from media.store import LocalFSStore, content_key
 
 
@@ -95,21 +103,94 @@ def test_build_records_sizes_avito_on_product(session, tmp_path):
     assert product.sizes_avito == "46 (S),48 (M),50 (L)"
 
 
-def test_build_generates_photo_variations_from_raw_asset(session, tmp_path):
-    product = _make_product(session)
-    store = LocalFSStore(tmp_path)
-
+def _add_raw_asset(session, store, *, supplier_item_id: int = 1) -> MediaAsset:
     raw_bytes = _fake_photo_bytes()
-    key = content_key(raw_bytes, prefix="raw/supplier_item_1")
+    key = content_key(raw_bytes, prefix=f"raw/supplier_item_{supplier_item_id}")
     store.save(key, raw_bytes)
-    raw_asset = MediaAsset(
-        supplier_item_id=1,
+    asset = MediaAsset(
+        supplier_item_id=supplier_item_id,
         kind=MediaAssetKind.RAW,
         storage_key=key,
         public_url=store.public_url(key),
     )
-    session.add(raw_asset)
+    session.add(asset)
     session.commit()
+    session.refresh(asset)
+    return asset
+
+
+def test_refresh_photos_fills_drafts_built_before_photos_arrived(session, tmp_path):
+    """Фото поставщика приезжают позже текста (B-018), а build существующую
+    карточку пропускает целиком — без дозаполнения она осталась бы без
+    Images навсегда, и Автозагрузка её не приняла бы."""
+    product = _make_product(session)
+    store = LocalFSStore(tmp_path)
+    build_listings_for_product(session, product, store)
+    assert all(
+        listing.photo_urls_rendered == ""
+        for listing in session.exec(select(Listing).where(Listing.product_id == product.id))
+    )
+
+    _add_raw_asset(session, store)
+    summary = refresh_photos_for_product(session, product, store, dry_run=False)
+
+    assert len(summary.filled) == len(GeoCity)
+    listings = list(session.exec(select(Listing).where(Listing.product_id == product.id)))
+    assert all(listing.photo_urls_rendered for listing in listings)
+    assert len(listings) == len(GeoCity)  # карточки те же, не пересозданы
+
+
+def test_refresh_photos_dry_run_changes_nothing(session, tmp_path):
+    product = _make_product(session)
+    store = LocalFSStore(tmp_path)
+    build_listings_for_product(session, product, store)
+    _add_raw_asset(session, store)
+
+    summary = refresh_photos_for_product(session, product, store, dry_run=True)
+
+    assert len(summary.filled) == len(GeoCity)
+    assert (
+        list(session.exec(select(MediaAsset).where(MediaAsset.kind == MediaAssetKind.VARIATE)))
+        == []
+    )
+
+
+def test_refresh_photos_leaves_published_listings_alone(session, tmp_path):
+    """У карточки, уехавшей в Авито, фото меняет перезалив (Э7), не мы."""
+    product = _make_product(session)
+    store = LocalFSStore(tmp_path)
+    build_listings_for_product(session, product, store)
+    for listing in session.exec(select(Listing).where(Listing.product_id == product.id)):
+        listing.state = ListingState.PUBLISHED
+        session.add(listing)
+    session.commit()
+    _add_raw_asset(session, store)
+
+    summary = refresh_photos_for_product(session, product, store, dry_run=False)
+
+    assert summary.filled == []
+    assert all(
+        listing.photo_urls_rendered == ""
+        for listing in session.exec(select(Listing).where(Listing.product_id == product.id))
+    )
+
+
+def test_refresh_photos_reports_product_without_raw(session, tmp_path):
+    product = _make_product(session)
+    store = LocalFSStore(tmp_path)
+    build_listings_for_product(session, product, store)
+
+    summary = refresh_photos_for_product(session, product, store, dry_run=False)
+
+    assert summary.filled == []
+    assert summary.no_raw == [product.id]
+
+
+def test_build_generates_photo_variations_from_raw_asset(session, tmp_path):
+    product = _make_product(session)
+    store = LocalFSStore(tmp_path)
+
+    raw_asset = _add_raw_asset(session, store)
 
     build_listings_for_product(session, product, store)
 

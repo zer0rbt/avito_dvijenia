@@ -14,17 +14,39 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
+from avito.budget import BudgetCheckError, check_budget
 from bot.registry import register
+from core.config import get_settings
 from core.db import get_session
 from core.models import Listing, ListingState, OperationKind, Product, ProductStatus, utcnow
 
 
 def _publish_executor_factory(listing_ids: list[int]):
     def _execute() -> None:
+        _require_budget()
         with get_session() as session:
             mark_queued(session, listing_ids)
 
     return _execute
+
+
+def _require_budget() -> None:
+    """Последний рубеж перед переводом карточек в QUEUED.
+
+    Проверка есть и в `cli.py planner run`, но там она защищает только один
+    путь. Сюда приходит и подтверждение из бота, и будущий планировщик (Э9),
+    а QUEUED означает «карточка уедет в фид при следующем опросе Авито» —
+    то есть начнёт тратить аванс. Между планированием и нажатием кнопки
+    может пройти сколько угодно времени, за которое аванс успевает
+    кончиться, так что спрашивать надо здесь, а не только на входе.
+    """
+    settings = get_settings()
+    if not settings.avito_user_id:
+        raise BudgetCheckError("AVITO_USER_ID не задан — бюджет не проверить, публикация отменена")
+
+    status = check_budget(user_id=settings.avito_user_id)
+    if not status.publish_allowed:
+        raise BudgetCheckError(f"публикация отменена: {status.reason}")
 
 
 def mark_queued(session: Session, listing_ids: list[int]) -> None:
