@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .env
 *.db
+*.db-journal
 *.db.bak-*
 *.sqlite3
 media_store/

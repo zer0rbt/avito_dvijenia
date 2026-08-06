@@ -137,9 +137,15 @@ def _parse_page(page: Path, root: Path, posts: list[ExportPost]) -> None:
         photos = [
             root / href for a in node.css("a.photo_wrap") if (href := a.attributes.get("href"))
         ]
+        has_media = node.css_first("div.media_wrap") is not None
 
         # Хвост альбома: без текста, вплотную по времени к предыдущему посту.
-        if not text and photos and posts and _is_album_tail(posts[-1], dt):
+        # Считаем хвостом любое медиа, а не только фото: в альбоме попадаются
+        # видео, а выгрузка по умолчанию их не забирает («Not included, change
+        # data exporting settings»). Пропустить такое сообщение нельзя — в
+        # прайсе ссылка может вести именно на него (`?single`), и тогда пост
+        # с фото не находится вовсе.
+        if not text and has_media and posts and _is_album_tail(posts[-1], dt):
             posts[-1].photos.extend(photos)
             if message_id is not None:
                 posts[-1].member_ids.append(message_id)

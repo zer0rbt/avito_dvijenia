@@ -71,15 +71,23 @@ def sync_media_for_supplier_items(
         # тем, что она чаще всего уже не отдаёт (B-018).
         export_paths = export_photos.get(item.id, [])
         source_urls = _resolve_direct_urls(item)
-        if not source_urls and not export_paths:
-            source_urls = _resolve_preview_urls(item)
-
-        # Ни прямых ссылок, ни выгрузки, ни превью — последняя попытка через
-        # историю канала. Telethon отдаёт байты, а не ссылки: медиа-URL
-        # Telegram подписанные и временные.
         telethon_photos: list[bytes] = []
-        if not source_urls and not export_paths:
-            telethon_photos = _resolve_telethon_photos(item)
+
+        # Поиск источника тоже ходит в сеть, и падение здесь раньше роняло
+        # весь прогон: одна недоступная позиция — и остальные 80 не
+        # обработаны, хотя их фото лежат на диске. Сеть в WSL отваливается
+        # регулярно (B-013), так что это не теория.
+        try:
+            if not source_urls and not export_paths:
+                source_urls = _resolve_preview_urls(item)
+            # Ни прямых ссылок, ни выгрузки, ни превью — последняя попытка
+            # через историю канала. Telethon отдаёт байты, а не ссылки:
+            # медиа-URL Telegram подписанные и временные.
+            if not source_urls and not export_paths:
+                telethon_photos = _resolve_telethon_photos(item)
+        except Exception as e:
+            summary.failed[item.id] = str(e)
+            continue
 
         if not source_urls and not export_paths and not telethon_photos:
             summary.skipped_no_source.append(item.id)

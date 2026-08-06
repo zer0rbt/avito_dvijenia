@@ -39,8 +39,23 @@ def test_album_becomes_one_post_with_all_photos(posts):
     """
     album = next(p for p in posts if p.message_id == 4201)
     assert len(album.photos) == 3
-    assert album.member_ids == [4201, 4202, 4203]
     assert all(p.is_absolute() for p in album.photos)
+
+
+def test_video_inside_album_stays_addressable(posts):
+    """Видео в альбоме выгрузка по умолчанию не забирает — но id сообщения
+    всё равно должен вести на альбом.
+
+    В прайсе ссылка ставится через «поделиться» на конкретное медиа
+    (`?single`), и у трёх позиций она указывает как раз на видео. Пропустив
+    такое сообщение, мы теряем весь пост с фото.
+    """
+    album = next(p for p in posts if p.message_id == 4201)
+    assert album.member_ids == [4201, 4202, 4203, 4204]
+    assert len(album.photos) == 3  # видео фотографией не притворяется
+
+    index = build_post_index(posts)
+    assert index[4204] is album
 
 
 def test_post_after_album_gap_is_separate(posts):

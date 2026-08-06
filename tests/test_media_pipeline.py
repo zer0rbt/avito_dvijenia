@@ -146,6 +146,31 @@ def _make_export(root, *, message_id: int, photos: int):
     return root
 
 
+def test_network_failure_while_resolving_does_not_kill_the_whole_sync(
+    session, tmp_path, monkeypatch
+):
+    """Позиция, для которой не отвечает сеть, не должна мешать остальным.
+
+    Реальный случай: с выгрузкой на диске синк падал целиком, потому что у
+    одной непривязанной позиции веб-превью ушло в ConnectError (B-013).
+    """
+
+    def unreachable(*_a, **_k):
+        raise OSError("[Errno 101] Network is unreachable")
+
+    monkeypatch.setattr(pipeline_module, "fetch_post_photo_urls", unreachable)
+    monkeypatch.setattr(pipeline_module, "fetch_photo_bytes", lambda url, **k: FAKE_PHOTO_BYTES)
+
+    broken = _make_item(session, post_url="https://t.me/ch/1")
+    fine = _make_item(session, source_key="gsheets:test:2", photo_urls="https://example.com/a.jpg")
+    store = LocalFSStore(tmp_path)
+
+    summary = sync_media_for_supplier_items(session, store, dry_run=False)
+
+    assert broken.id in summary.failed
+    assert summary.fetched == [fine.id]
+
+
 def test_skips_items_without_any_photo_source(session, tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "fetch_photo_bytes", lambda url, **k: FAKE_PHOTO_BYTES)
     item = _make_item(session)
