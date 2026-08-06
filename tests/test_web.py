@@ -7,10 +7,11 @@ from core.models import GeoCity, Listing, ListingState, Product, ProductStatus
 from tests.conftest import categories_doc
 
 UNVERIFIED = categories_doc(verified=False)
-# Delivery в боевом файле ещё не заполнен, поэтому «полностью готовая» схема
-# для теста — это реальная схема с очищенным списком нерешённых полей.
-VERIFIED = categories_doc(unresolved_required_fields=[])
-UNRESOLVED_FIELD = categories_doc()
+VERIFIED = categories_doc()
+# В боевой схеме нерешённых полей больше нет (B-024 закрыт: валидатор Авито
+# принял объявление без Delivery). Рубеж «поле без справочника» от этого не
+# исчез, поэтому для теста подставляем такое поле руками.
+UNRESOLVED_FIELD = categories_doc(unresolved_required_fields=["Delivery"])
 
 
 def test_health_endpoint():

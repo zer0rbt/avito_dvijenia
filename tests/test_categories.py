@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import shutil
+from pathlib import Path
 
 import pytest
+import yaml
 
 from avito.categories import (
     DATA_PATH,
@@ -20,11 +21,32 @@ def test_shipped_schema_is_verified_against_avito_templates():
     assert doc.template_id == 100343
 
 
-def test_publication_still_blocked_while_required_field_values_unknown():
-    """Схема сверена, но Delivery без справочника — публиковать нельзя.
-    Это второй рубеж require_verified(), кроме флага verified."""
+def test_shipped_schema_no_longer_blocks_publication():
+    """Единственное поле без справочника (Delivery) закрыто: официальный
+    валидатор Авито принял объявление без него (B-024)."""
     doc = load_categories()
-    assert "Delivery" in doc.unresolved_required_fields
+    assert doc.unresolved_required_fields == []
+    doc.require_verified()
+
+
+def test_delivery_is_not_required_despite_the_template():
+    """Шаблон помечает Delivery обязательным, валидатор Авито — нет.
+
+    Регресс на живой ответ валидатора (06.08.2026): объявление без тега —
+    «Соответствует формату», все шесть проверенных написаний значения —
+    «Способ доставки: Значение не найдено». Поэтому тег не отдаём вовсе;
+    если кто-то вернёт его в required_tags, фид начнёт требовать значение,
+    которого мы не знаем.
+    """
+    doc = load_categories()
+    assert "Delivery" not in doc.required_tags
+    assert "Delivery" in doc.conditionally_required_tags
+    assert doc.allowed("Delivery") == []
+
+
+def test_require_verified_still_blocks_on_unresolved_field():
+    """Сам рубеж никуда не делся — проверяем на искусственном поле."""
+    doc = categories_doc(unresolved_required_fields=["Delivery"])
     with pytest.raises(CategoriesNotVerifiedError, match="Delivery"):
         doc.require_verified()
 
@@ -79,21 +101,35 @@ def test_adstatus_is_promotion_not_archiving():
 
 
 def test_candidates_are_not_treated_as_a_dictionary():
-    """Ответ заказчика по смыслу («доставка — авито») не должен ни
-    разблокировать публикацию, ни попасть в справочник: Авито сверяет
-    строкой, а дословное написание нам никто не подтверждал."""
-    doc = load_categories()
-    assert doc.candidates["Delivery"]  # подсказка записана
-    assert "Delivery" not in doc.enums  # но справочником не стала
-    assert "Delivery" in doc.unresolved_required_fields
-    with pytest.raises(CategoriesNotVerifiedError, match="Delivery"):
-        doc.require_verified()
+    """Ответ по смыслу не должен ни разблокировать публикацию, ни попасть
+    в справочник: Авито сверяет строкой. Проверка не на живой схеме — там
+    кандидатов уже не осталось, — а на самом механизме."""
+    doc = categories_doc(
+        unresolved_required_fields=["Delivery"],
+        candidates={"Delivery": ["Авито доставка"]},
+    )
+    assert doc.allowed("Delivery") == []  # кандидат справочником не стал
+    with pytest.raises(CategoriesNotVerifiedError, match="Авито доставка"):
+        doc.require_verified()  # но в тексте ошибки подсказан
+
+
+def _schema_with_unresolved(tmp_path) -> Path:
+    """Копия боевой схемы с искусственно нерешённым полем.
+
+    В самой схеме нерешённых полей больше нет (B-024), а механизм закрытия
+    проверять надо — иначе следующий такой случай встретим без тестов.
+    """
+    path = tmp_path / "categories.yaml"
+    raw = yaml.safe_load(DATA_PATH.read_text(encoding="utf-8"))
+    raw["required_tags"].append("Delivery")
+    raw["unresolved_required_fields"] = ["Delivery"]
+    raw["candidates"] = {"Delivery": ["Авито доставка"]}
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
 
 
 def test_resolve_field_unblocks_publication(tmp_path):
-    """Ровно та операция, которой закрывается B-024."""
-    path = tmp_path / "categories.yaml"
-    shutil.copy(DATA_PATH, path)
+    path = _schema_with_unresolved(tmp_path)
 
     resolve_field("Delivery", ["Авито доставка"], path=path)
 
@@ -105,16 +141,14 @@ def test_resolve_field_unblocks_publication(tmp_path):
 
 
 def test_resolve_field_refuses_unknown_tag(tmp_path):
-    path = tmp_path / "categories.yaml"
-    shutil.copy(DATA_PATH, path)
+    path = _schema_with_unresolved(tmp_path)
 
     with pytest.raises(ValueError, match="обязательным"):
         resolve_field("НеТег", ["значение"], path=path)
 
 
 def test_resolve_field_refuses_empty_values(tmp_path):
-    path = tmp_path / "categories.yaml"
-    shutil.copy(DATA_PATH, path)
+    path = _schema_with_unresolved(tmp_path)
 
     with pytest.raises(ValueError):
         resolve_field("Delivery", [], path=path)

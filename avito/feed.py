@@ -137,9 +137,9 @@ def validate_feed_xml(xml: str, *, categories: CategoriesDoc | None = None) -> l
     обязательные теги на месте, значения — из справочников. Не замена
     официальному валидатору Авито, но ловит то, что мы можем поймать сами.
 
-    Delivery намеренно не проверяется на значение: его допустимых значений
-    мы не знаем (unresolved_required_fields), и require_verified() всё
-    равно не даст такому фиду уехать наружу.
+    Delivery не проверяем и не отдаём вовсе: официальный валидатор Авито
+    принял объявление без этого тега, хотя xlsx-шаблон зовёт его
+    обязательным (см. комментарий в categories.yaml и B-024).
     """
     categories = categories or load_categories()
     errors: list[str] = []
