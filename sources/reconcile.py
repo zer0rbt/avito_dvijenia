@@ -27,12 +27,25 @@ class ReconcileSummary:
 
 
 def _row_changed(existing: SupplierItem, fresh: RawRow) -> bool:
+    """Сравниваем ровно те поля, которые пишет _apply().
+
+    Раньше сравнивались пять из десяти, и расхождение было не косметическим:
+    изменившийся `post_url` (это источник фото), `ship_city` или `brand`
+    считались «без изменений» и в БД не попадали никогда — строка уже есть,
+    значит _apply() не зовётся. Обнаружилось, когда у `best_dropship`
+    появился город отгрузки: диф показал 3 изменения вместо 51.
+    """
     return (
         existing.raw_title != fresh.raw_title
+        or existing.brand != fresh.brand
+        or existing.goods_type != fresh.goods_type
         or existing.color != fresh.color
         or existing.sizes_available != ",".join(fresh.sizes_available)
         or existing.price_purchase != fresh.price_purchase
         or existing.price_rrc != fresh.price_rrc
+        or existing.photo_urls != ",".join(fresh.photo_urls)
+        or existing.ship_city != fresh.ship_city
+        or existing.post_url != fresh.post_url
     )
 
 

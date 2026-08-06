@@ -41,6 +41,11 @@ class CategoriesDoc:
     required_tags: list[str] = field(default_factory=list)
     conditionally_required_tags: list[str] = field(default_factory=list)
     enums: dict[str, list[str]] = field(default_factory=dict)
+    # Ответы заказчика по смыслу, чьё дословное написание не подтверждено.
+    # Намеренно отдельно от enums: is_allowed() их не видит, в фид они не
+    # попадают, публикацию не разблокируют. Нужны только чтобы подсказка
+    # «что скорее всего имелось в виду» не потерялась.
+    candidates: dict[str, list[str]] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)
     size_map: dict[str, str] = field(default_factory=dict)
     color_map: dict[str, str] = field(default_factory=dict)
@@ -64,12 +69,19 @@ class CategoriesDoc:
             )
         if self.unresolved_required_fields:
             missing = ", ".join(self.unresolved_required_fields)
+            hints = [
+                f"{tag}: похоже на {', '.join(repr(v) for v in values)}"
+                for tag, values in self.candidates.items()
+                if tag in self.unresolved_required_fields
+            ]
+            hint_text = f" Кандидаты (не подтверждены): {'; '.join(hints)}." if hints else ""
             raise CategoriesNotVerifiedError(
                 f"{DATA_PATH.name}: обязательные поля без известных допустимых "
                 f"значений: {missing}. Подставлять сюда догадку нельзя — Авито "
-                "либо отклонит объявление, либо примет не то. Выписать значения "
-                "из шаблона (лист «Объявления», соответствующий столбец) в enums "
-                "и очистить unresolved_required_fields."
+                "либо отклонит объявление, либо примет не то."
+                f"{hint_text} Узнать точное значение и закрыть одной командой: "
+                f"python cli.py categories resolve-field {missing.split(', ')[0]} "
+                '"<точное значение>"'
             )
 
 
@@ -88,11 +100,45 @@ def load_categories(path: Path = DATA_PATH) -> CategoriesDoc:
         required_tags=raw.get("required_tags") or [],
         conditionally_required_tags=raw.get("conditionally_required_tags") or [],
         enums=raw.get("enums") or {},
+        candidates=raw.get("candidates") or {},
         defaults=raw.get("defaults") or {},
         size_map=raw.get("size_map") or {},
         color_map=raw.get("color_map") or {},
         open_questions=raw.get("open_questions") or [],
     )
+
+
+def resolve_field(tag: str, values: list[str], path: Path = DATA_PATH) -> None:
+    """Записать допустимые значения обязательного поля и снять с него блок.
+
+    Правит YAML целиком через yaml.safe_dump — комментарии файла при этом
+    теряются, поэтому вызывать это стоит только ради полей из
+    `unresolved_required_fields`, а не как общий редактор схемы.
+
+    Значения не выдумываем: сюда попадает то, что человек прочитал в ЛК или
+    подтвердил валидатором Авито (https://autoload.avito.ru/format/xmlcheck/).
+    """
+    if not values:
+        raise ValueError("нужно хотя бы одно значение — пустой справочник ничего не разблокирует")
+
+    with open(path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+
+    unresolved = raw.get("unresolved_required_fields") or []
+    if tag not in unresolved and tag not in (raw.get("required_tags") or []):
+        raise ValueError(f"{tag} не значится обязательным полем в {path.name}")
+
+    raw.setdefault("enums", {})[tag] = values
+    raw["unresolved_required_fields"] = [f for f in unresolved if f != tag]
+    candidates = raw.get("candidates") or {}
+    candidates.pop(tag, None)
+    if candidates:
+        raw["candidates"] = candidates
+    else:
+        raw.pop("candidates", None)
+
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False, width=100)
 
 
 def render_markdown(doc: CategoriesDoc) -> str:

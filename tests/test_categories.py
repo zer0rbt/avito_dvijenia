@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
-from avito.categories import CategoriesNotVerifiedError, load_categories, render_markdown
+from avito.categories import (
+    DATA_PATH,
+    CategoriesNotVerifiedError,
+    load_categories,
+    render_markdown,
+    resolve_field,
+)
 from tests.conftest import categories_doc
 
 
@@ -68,6 +76,48 @@ def test_adstatus_is_promotion_not_archiving():
     doc = load_categories()
     assert "Free" in doc.allowed("AdStatus")
     assert doc.feed["archive_tag"] == "DateEnd"
+
+
+def test_candidates_are_not_treated_as_a_dictionary():
+    """Ответ заказчика по смыслу («доставка — авито») не должен ни
+    разблокировать публикацию, ни попасть в справочник: Авито сверяет
+    строкой, а дословное написание нам никто не подтверждал."""
+    doc = load_categories()
+    assert doc.candidates["Delivery"]  # подсказка записана
+    assert "Delivery" not in doc.enums  # но справочником не стала
+    assert "Delivery" in doc.unresolved_required_fields
+    with pytest.raises(CategoriesNotVerifiedError, match="Delivery"):
+        doc.require_verified()
+
+
+def test_resolve_field_unblocks_publication(tmp_path):
+    """Ровно та операция, которой закрывается B-024."""
+    path = tmp_path / "categories.yaml"
+    shutil.copy(DATA_PATH, path)
+
+    resolve_field("Delivery", ["Авито доставка"], path=path)
+
+    doc = load_categories(path)
+    assert doc.allowed("Delivery") == ["Авито доставка"]
+    assert doc.unresolved_required_fields == []
+    assert "Delivery" not in doc.candidates
+    doc.require_verified()  # больше не блокирует
+
+
+def test_resolve_field_refuses_unknown_tag(tmp_path):
+    path = tmp_path / "categories.yaml"
+    shutil.copy(DATA_PATH, path)
+
+    with pytest.raises(ValueError, match="обязательным"):
+        resolve_field("НеТег", ["значение"], path=path)
+
+
+def test_resolve_field_refuses_empty_values(tmp_path):
+    path = tmp_path / "categories.yaml"
+    shutil.copy(DATA_PATH, path)
+
+    with pytest.raises(ValueError):
+        resolve_field("Delivery", [], path=path)
 
 
 def test_render_markdown_reports_blocked_status_and_dictionaries():

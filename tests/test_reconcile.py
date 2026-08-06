@@ -35,6 +35,29 @@ def test_write_persists_new_items(session):
     assert all(item.is_available for item in saved)
 
 
+def test_changed_post_url_is_detected_and_applied(session):
+    """Регресс: _row_changed сравнивал 5 полей из 10, которые пишет _apply.
+
+    `post_url` — источник фото для media/*; если он поменялся, а строка уже
+    есть, старая версия оставалась бы в БД навсегда. Так же вело себя поле
+    ship_city, на котором это и вскрылось.
+    """
+    first = _row("s:1", "Товар A", 1000.0)
+    first.post_url = "https://t.me/ch/1"
+    first.ship_city = None
+    reconcile_source(session, source_name="s", fresh_rows=[first], dry_run=False)
+
+    second = _row("s:1", "Товар A", 1000.0)
+    second.post_url = "https://t.me/ch/2"
+    second.ship_city = "Ижевск"
+    summary = reconcile_source(session, source_name="s", fresh_rows=[second], dry_run=False)
+
+    assert summary.changed == ["s:1"]
+    saved = session.exec(select(SupplierItem)).one()
+    assert saved.post_url == "https://t.me/ch/2"
+    assert saved.ship_city == "Ижевск"
+
+
 def test_second_sync_with_same_data_reports_unchanged(session):
     rows = [_row("s:1", "Товар A", 1000.0)]
     reconcile_source(session, source_name="s", fresh_rows=rows, dry_run=False)

@@ -1,4 +1,4 @@
-.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build content-refresh-photos feed-build budget-check planner-run bot web
+.PHONY: help setup check test lint fix audit access sync sync-write categories admin-sync media-sync media-sync-write content-build content-refresh-photos feed-build budget-check planner-run bot web tunnel
 
 help:
 	@echo "setup        - создать venv и поставить зависимости"
@@ -21,6 +21,7 @@ help:
 	@echo "planner-run  - выбрать DRAFT-листинги под бюджет, запросить PUBLISH (dry-run)"
 	@echo "bot          - запустить Telegram-бота"
 	@echo "web          - запустить FastAPI (/feed.xml, /media/*, /health)"
+	@echo "tunnel       - поднять Cloudflare Tunnel и напечатать публичный адрес"
 
 setup:
 	bash scripts/setup_venv.sh
@@ -81,3 +82,6 @@ bot:
 
 web:
 	bash scripts/run_web.sh
+
+tunnel:
+	bash scripts/run_tunnel.sh

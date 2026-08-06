@@ -22,7 +22,7 @@ from admin.queue import (
 from admin.sheet import AdminSheet, AdminSheetNotConfiguredError
 from avito.auth import AvitoAuthError, fetch_access_token
 from avito.budget import BudgetCheckError, check_budget
-from avito.categories import DATA_PATH, load_categories, render_markdown
+from avito.categories import DATA_PATH, load_categories, render_markdown, resolve_field
 from avito.client import AvitoApiError, AvitoClient
 from avito.feed import build_feed_xml, validate_feed_xml
 from avito.sizes import map_sizes
@@ -178,7 +178,14 @@ def categories_dump(
     out_path = DOCS_DIR / "categories.md"
     out_path.write_text(render_markdown(doc), encoding="utf-8")
 
-    if doc.verified:
+    if doc.verified and doc.unresolved_required_fields:
+        # Схема сверена, но публиковать всё равно нельзя — говорим об этом
+        # прямо, иначе «сверено» читается как «можно публиковать».
+        console.print(
+            f"[yellow]Сверено, но публикация заблокирована:[/yellow] нет значений для "
+            f"{', '.join(doc.unresolved_required_fields)}. -> {out_path}"
+        )
+    elif doc.verified:
         console.print(f"[green]Категории сверены с ЛК.[/green] -> {out_path}")
     else:
         console.print(
@@ -186,6 +193,37 @@ def categories_dump(
             f"Сгенерировано в {out_path}. Сверить с ЛК → Автозагрузка → "
             "Правила и шаблоны перед боевой публикацией."
         )
+
+
+@app.command("categories-resolve-field")
+def categories_resolve_field(
+    tag: str = typer.Argument(..., help="Тег Автозагрузки, напр. Delivery"),
+    values: list[str] = typer.Argument(..., help="Допустимые значения, дословно из ЛК"),
+) -> None:
+    """Записать значения обязательного поля и снять с него блок публикации.
+
+    Для полей, чьих значений нет в шаблоне (сейчас это `Delivery`, B-024).
+    Значения берём из ЛК или подтверждаем валидатором Авито
+    https://autoload.avito.ru/format/xmlcheck/ — не выдумываем: Авито
+    сверяет строкой, и неверное значение либо отклонит объявление, либо
+    примет не то.
+    """
+    try:
+        resolve_field(tag, list(values))
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    doc = load_categories()
+    console.print(f"[green]{tag} = {', '.join(repr(v) for v in values)}[/green]")
+    if doc.unresolved_required_fields:
+        console.print(
+            f"Осталось без значений: {', '.join(doc.unresolved_required_fields)} — "
+            "публикация всё ещё заблокирована."
+        )
+    else:
+        console.print("Необязательных полей без значений не осталось.")
+        console.print("Перегенерировать docs/categories.md: [bold]make categories[/bold]")
 
 
 sources_app = typer.Typer(no_args_is_help=True, add_completion=False)

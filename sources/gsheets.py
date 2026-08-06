@@ -142,6 +142,13 @@ class BestDropshipHoodiesSource:
     DATA_START_ROW = 4
     MIN_EXPECTED_ROWS = 10
 
+    # Колонки города отгрузки в этой таблице нет — заказчик подтвердил
+    # (06.08.2026), что всё у этого поставщика едет из Ижевска. Держим
+    # константой источника, а не догадкой на месте: если поставщик начнёт
+    # отправлять откуда-то ещё, менять придётся здесь, и это будет заметно.
+    # Разбирать город из текста поста — B-027.
+    SHIP_CITY = "Ижевск"
+
     def fetch(self) -> list[RawRow]:
         rows = fetch_csv_rows(self.SHEET_ID)
         out: list[RawRow] = []
@@ -172,6 +179,7 @@ class BestDropshipHoodiesSource:
                     price_purchase=price_purchase,
                     price_rrc=price_rrc,
                     post_url=post_url,
+                    ship_city=self.SHIP_CITY,
                 )
             )
         return out
