@@ -36,10 +36,19 @@ from content.titles import render_title
 from core.approval import ApprovalRequiredError, request_operation
 from core.config import get_settings
 from core.db import get_session, init_db
-from core.models import GeoCity, Listing, ListingState, OperationKind, Product, ProductStatus
+from core.models import (
+    GeoCity,
+    Listing,
+    ListingState,
+    OperationKind,
+    Product,
+    ProductStatus,
+    SupplierItem,
+)
 from lifecycle.planner import plan_next_batch
 from media.pipeline import sync_media_for_supplier_items
 from media.store import get_media_store
+from media.telegram_export import ItemRef, match_items_to_posts, parse_export
 from sources.gsheets import ALL_SOURCES
 from sources.reconcile import reconcile_source
 
@@ -348,22 +357,31 @@ def media_sync(
     force: bool = typer.Option(
         False, "--force", help="Перекачать фото даже для позиций, у которых уже есть RAW-ассеты."
     ),
+    export: Path | None = typer.Option(
+        None,
+        "--export",
+        help="Папка выгрузки Telegram Desktop — брать фото оттуда, а не из сети.",
+    ),
 ) -> None:
     """Э3: скачать исходные фото под каждый SupplierItem (прямые ссылки из
-    таблицы или пост TG-канала) в MediaStore, зарегистрировать в MediaAsset
-    с pHash. Идемпотентно — позиции с уже скачанными фото пропускаются,
-    если не передан --force.
+    таблицы, локальная выгрузка канала или пост TG) в MediaStore,
+    зарегистрировать в MediaAsset с pHash. Идемпотентно — позиции с уже
+    скачанными фото пропускаются, если не передан --force.
     """
     init_db()
     store = get_media_store()
 
     with get_session() as session:
-        summary = sync_media_for_supplier_items(session, store, dry_run=dry_run, force=force)
+        summary = sync_media_for_supplier_items(
+            session, store, dry_run=dry_run, force=force, export_root=export
+        )
 
     console.print(
         f"скачано: {len(summary.fetched)} | без источника фото: {len(summary.skipped_no_source)} | "
         f"уже было: {len(summary.skipped_already_fetched)} | ошибок: {len(summary.failed)}"
     )
+    if summary.from_export:
+        console.print(f"из выгрузки: {len(summary.from_export)}")
     for item_id, error in list(summary.failed.items())[:5]:
         console.print(f"  [red]#{item_id}: {error}[/red]")
 
@@ -372,6 +390,57 @@ def media_sync(
             "\n[yellow]dry-run: файлы не скачаны, MediaAsset не записан. "
             "Повторить с --write.[/yellow]"
         )
+
+
+@media_app.command("export-report")
+def media_export_report(
+    export: Path = typer.Argument(..., help="Папка выгрузки Telegram Desktop."),
+    show: int = typer.Option(15, "--show", help="Сколько строк показывать в каждом разделе."),
+) -> None:
+    """Что даст выгрузка канала, если её применить. Ничего не пишет.
+
+    Гоняем до `media sync --export`, чтобы заранее увидеть, того ли канала
+    выгрузка и за тот ли период: `нет в выгрузке` — это как раз «пост есть,
+    но в файл он не попал».
+    """
+    init_db()
+    posts = parse_export(export)
+    with_photos = [p for p in posts if p.photos]
+    console.print(
+        f"постов в выгрузке: {len(posts)} | с фото: {len(with_photos)} | "
+        f"фото всего: {sum(len(p.photos) for p in posts)}"
+    )
+
+    with get_session() as session:
+        items = [
+            ItemRef(item_id=i.id, title=i.raw_title, post_url=i.post_url)
+            for i in session.exec(select(SupplierItem).where(SupplierItem.is_available))
+            if i.id is not None
+        ]
+        titles = {i.item_id: i.title for i in items}
+        result = match_items_to_posts(items, posts)
+
+    console.print(
+        f"\nпозиций: {len(items)} | привязано: {len(result.matched)} "
+        f"(фото: {result.photos_total}) | неоднозначно: {len(result.ambiguous)} | "
+        f"нет в выгрузке: {len(result.missing_in_export)} | без совпадения: {len(result.unmatched)}"
+    )
+
+    if result.matched:
+        console.print("\n[green]привязано[/green]")
+        for item_id, match in list(result.matched.items())[:show]:
+            console.print(
+                f"  #{item_id:<4} {titles[item_id][:34]:<34} "
+                f"{len(match.post.photos)}ф  [{match.way}]"
+            )
+    if result.ambiguous:
+        console.print("\n[yellow]неоднозначно — оператору[/yellow]")
+        for item_id, cands in list(result.ambiguous.items())[:show]:
+            console.print(f"  #{item_id:<4} {titles[item_id][:34]:<34} кандидатов: {len(cands)}")
+    if result.missing_in_export:
+        console.print("\n[yellow]ссылка на пост есть, но поста нет в выгрузке[/yellow]")
+        for item_id in result.missing_in_export[:show]:
+            console.print(f"  #{item_id:<4} {titles[item_id][:44]}")
 
 
 admin_app = typer.Typer(no_args_is_help=True, add_completion=False)

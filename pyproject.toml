@@ -86,6 +86,12 @@ ignore = [
     "RUF003",  # ... в комментариях
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# У Typer объявление параметра — это и есть вызов в дефолте, другого способа
+# задать help и имя флага нет. B008 пропускает такие вызовы для str/int/bool,
+# но не для Path, из-за чего ругался только на параметры-пути.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 [tool.ruff.lint.per-file-ignores]
 # CLI и разовые скрипты печатают в консоль — это их работа, а не забытая отладка.
 "cli.py" = ["T20"]
